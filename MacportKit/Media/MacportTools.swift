@@ -438,19 +438,19 @@ public enum MacportTools {
 
         walk(driverDirectory, depth: 1)
         return candidates.sorted { lhs, rhs in
-            let lhsRank = versionRank(of: lhs)
-            let rhsRank = versionRank(of: rhs)
+            let lhsRank = versionRank(of: lhs, in: driverDirectory)
+            let rhsRank = versionRank(of: rhs, in: driverDirectory)
             if lhsRank != rhsRank { return lhsRank < rhsRank }
             return lhs.path < rhs.path
         }.first
     }
 
-    /// Lower is newer. A direct `<Driver>/arm64` beats any versioned tree.
-    private static func versionRank(of tree: URL) -> Int {
-        let parent = tree.deletingLastPathComponent().lastPathComponent.lowercased()
-        if parent == architectureDirectoryName.lowercased() { return 0 }
-        if parent.contains("w11") || parent.contains("2k25") { return 1 }
-        if parent.contains("w10") || parent.contains("2k22") || parent.contains("2k19") { return 2 }
+    /// Lower is newer. A direct `<Driver>/arm64` tree beats any versioned one.
+    private static func versionRank(of tree: URL, in driverDirectory: URL) -> Int {
+        if tree.deletingLastPathComponent().path == driverDirectory.path { return 0 }
+        let version = tree.deletingLastPathComponent().lastPathComponent.lowercased()
+        if version.contains("w11") || version.contains("2k25") { return 1 }
+        if version.contains("w10") || version.contains("2k22") || version.contains("2k19") { return 2 }
         return 3
     }
 
