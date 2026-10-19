@@ -42,23 +42,30 @@ the above.
 
 ## Status
 
-Early. Phase 1 — the hypervisor engine and VM library — is in progress.
+Early, and moving. Phase 1 — the engine layer and VM library — works; Phase 2 — the
+runtime boundaries that make it a product — is specified in
+`docs/REFACTOR-PLAN.md` and under implementation.
 
 | Area | State |
 | --- | --- |
 | `VMConfiguration` model, `.macport` bundle format | Done |
-| Engine protocol + capability model | Done |
-| Virtualization.framework engine (create/start/stop) | Done, untested against real media |
-| VM store (`~/Library/Application Support/Macport/VMs`) | Done |
-| SwiftUI interface | Built — library, creator, live display |
-| `macportctl` CLI | Working — `list`, `capabilities`, `create`, `start` |
-| Coherence-style app integration | Not started — see `ARCHITECTURE.md` |
+| Engine protocol + capability model | Done; v2 (pause/resume/snapshots) in progress |
+| Virtualization.framework engine (create/start/stop) | Working — Ubuntu 26.04 arm64 boots to desktop |
+| QEMU engine (Windows, optical media) | Working — Windows 11 Setup boots and installs |
+| Windows TPM bypass via generated answer media | Working — no manual registry edit |
+| Multi-VM runtime, control plane, per-VM QEMU host | Phase 2 — see `docs/REFACTOR-PLAN.md` |
+| Snapshots, clone, disk import | Phase 2 |
+| Macport Tools (guest drivers + agent) | Phase 2/3 |
+| SwiftUI interface | Library, creator, live display |
+| `macportctl` CLI | `list`, `capabilities`, `create`, `start`; parity in Phase 2 |
+| Coherence-style app integration | Not started — see `ARCHITECTURE.md` and the non-goals |
 
-Build verified with Xcode 27.1 / Swift 6.4: app and CLI both compile clean with no
-warnings, and `macportctl create` → `list` round-trips a real `.macport` bundle.
+Both schemes build clean from `xcodegen generate`; the QEMU runtime is embedded into
+the app bundle at build time when one is present locally.
 
-See `docs/competitive-analysis.md` for the reverse-engineering analysis of Parallels
-Desktop and UTM that informs these design decisions.
+See `docs/competitive-analysis.md` and `docs/evidence/` for the reverse-engineering
+analysis of Parallels Desktop and UTM that informs these design decisions.
+
 
 ## Requirements
 
