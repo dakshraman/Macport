@@ -2,21 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Shipping entitlements for Macport.app.
+
+	  The GUI is a client of the runtime, not a hypervisor host. Parallels'
+	  shipping split puts the powerful grants on the per-VM process, and this
+	  file follows that boundary: Macport.app keeps only Virtualization.framework
+	  (for the in-process VZ engine) and ordinary networking.
+
+	  The restricted grants that used to live here —
+	  com.apple.vm.networking, com.apple.vm.device-access and USB — moved to
+	  Support/MacportVMHost.entitlements, which the per-VM QEMU host will use
+	  once that target exists and Apple grants them. Until then Macport ships
+	  user-mode NAT and says so in the UI.
+	-->
+
+	<!-- Required to create and run Virtualization.framework guests. -->
 	<key>com.apple.security.virtualization</key>
 	<true/>
-	<key>com.apple.vm.networking</key>
-	<true/>
-	<key>com.apple.vm.device-access</key>
-	<true/>
-	<key>com.apple.security.device.usb</key>
-	<true/>
-	<key>com.apple.developer.accessory-access.usb</key>
-	<true/>
-	<key>com.apple.security.device.audio-input</key>
-	<true/>
+
+	<!-- Standard, unrestricted: the control socket client/server and the app's
+	     own update/telemetry-free networking. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- Audio input passthrough to the guest. -->
+	<key>com.apple.security.device.audio-input</key>
 	<true/>
 </dict>
 </plist>

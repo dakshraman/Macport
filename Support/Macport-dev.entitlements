@@ -18,6 +18,11 @@
 	  guessed at — the key is verified present in both UTM's and Parallels'
 	  shipping signatures.
 
+	  The shipping set no longer carries the restricted networking/device
+	  grants either: they moved to Support/MacportVMHost.entitlements for the
+	  per-VM process described in docs/REFACTOR-PLAN.md. So this file and the
+	  shipping file now agree on what a GUI process may hold.
+
 	  Consequence for local builds: NAT networking only, no USB passthrough. That
 	  is the same limitation as the shipping build today, for a different reason.
 	-->

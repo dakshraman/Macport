@@ -66,6 +66,19 @@ targets:
       # Sandbox is deliberately off in v1 — see Macport.entitlements for why and
       # what must happen before release.
       ENABLE_APP_SANDBOX: NO
+      # The runtime-embedding script writes into the app bundle. Script
+      # sandboxing would block that without declaring every input; it is a
+      # build-time copy of a known directory, so leave it unsandboxed.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postCompileScripts:
+      - name: Embed QEMU runtime
+        # The script compares source and destination before copying and exits 0
+        # when nothing changed, so Xcode's dependency analysis has nothing to
+        # save us from — and no outputs to declare.
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/vendor-runtime.sh" \
+            "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 
   MacportCtl:
     type: tool
