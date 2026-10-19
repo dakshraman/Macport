@@ -38,6 +38,30 @@ struct MacportCtl {
             await start(args)
         case "stop":
             await stop(args)
+        case "status":
+            await status(args)
+        case "pause":
+            await pause(args)
+        case "resume":
+            await resume(args)
+        case "snapshots":
+            await snapshots(args)
+        case "snapshot":
+            await snapshot(args)
+        case "restore":
+            await restore(args)
+        case "delete-snapshot":
+            await deleteSnapshot(args)
+        case "clone":
+            await clone(args)
+        case "import":
+            await importImage(args)
+        case "disk":
+            await disk(args)
+        case "delete", "rm":
+            await delete(args)
+        case "host-path":
+            hostPath()
         case "path":
             print(VMStore.defaultRoot.path)
         case "help", "--help", "-h":
@@ -243,7 +267,7 @@ struct MacportCtl {
 
     static func start(_ args: [String]) async {
         guard let name = args.first, !name.hasPrefix("-") else {
-            fail("Usage: macportctl start <name> [--iso <path>] [--memory <gb>] [--disk <gb>] [--engine <vz|qemu>]\n")
+            fail("Usage: macportctl start <name> [options] [--foreground]\n")
         }
         guard var config = await find(name) else { exit(1) }
 
@@ -294,8 +318,18 @@ struct MacportCtl {
         _ = try? await store.save(config)
 
         let bundle = await store.bundleURL(for: config)
-        let engine = await EngineRegistry.makeEngine(for: config)
 
+        if ObjectIdentifier(engineType) == ObjectIdentifier(QEMUEngine.self) {
+            await startHosted(config, in: bundle, args: args)
+            return
+        }
+
+        // Virtualization.framework's display object is bound to the process that
+        // created it, so a VZ guest cannot be handed to a separate host without a
+        // frame-transport layer. It therefore stays in this process, and this
+        // command stays in the foreground until the guest stops. That is a stated
+        // engine capability, not an unfinished path.
+        let engine = await EngineRegistry.makeEngine(for: config)
         print("Engine: \(engineType.displayName)")
 
         do {
@@ -325,20 +359,539 @@ struct MacportCtl {
         print("The virtual machine stopped.")
     }
 
+    /// Launch the per-VM host and return once it answers.
+    ///
+    /// QEMU is the engine that can outlive this command. The host is detached, so
+    /// its lifetime is the guest's, not the terminal's; `--foreground` is the
+    /// opt-in to the old blocking behaviour when someone wants the diagnostics.
+    static func startHosted(
+        _ config: VMConfiguration,
+        in bundle: URL,
+        args: [String]
+    ) async {
+        let socketPath = VMHostRuntime.socketPath(for: bundle, vmID: config.id)
+
+        if let metadata = VMHostRuntime.readMetadata(in: bundle),
+           VMHostRuntime.isProcessAlive(pid: metadata.pid) {
+            fail("\(config.name) is already running (pid \(metadata.pid)). Stop it first.\n")
+        }
+        // A dead pid's record describes a host that is gone; leaving it would
+        // make the next start look like a double start.
+        VMHostRuntime.removeMetadata(in: bundle)
+
+        do {
+            _ = try VMHostLauncher.resolve()
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+
+        if args.contains("--foreground") {
+            print("Engine: \(QEMUEngine.displayName)")
+            do {
+                let status = try VMHostLauncher.runForeground(
+                    config,
+                    bundle: bundle,
+                    socketPath: socketPath
+                )
+                exit(status)
+            } catch {
+                fail("\(error.localizedDescription)\n")
+            }
+        }
+
+        do {
+            let metadata = try await VMHostLauncher.launchDetached(
+                config,
+                bundle: bundle,
+                socketPath: socketPath,
+                logURL: VMHostRuntime.hostLogURL(in: bundle)
+            )
+            print(
+                "\(config.name) is running (pid \(metadata.pid), "
+                    + "engine \(QEMUEngine.displayName))"
+            )
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+    }
+
+    static func status(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl status <name> [--json]\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        let response = await send(.status, to: metadata, name: config.name)
+        guard case .status(let status)? = response.payload else {
+            fail("\(config.name): the host returned no status payload.\n")
+        }
+
+        if args.contains("--json") {
+            let encoder = VMControl.makeEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            do {
+                let data = try encoder.encode(status)
+                print(String(decoding: data, as: UTF8.self))
+            } catch {
+                fail("Could not encode status: \(error.localizedDescription)\n")
+            }
+            return
+        }
+
+        print("Name    : \(config.name)")
+        print("State   : \(status.state.rawValue)")
+        print("Engine  : \(EngineRegistry.displayName(forIdentifier: status.engineIdentifier))")
+        print("PID     : \(status.pid)")
+        print("Started : \(dateString(status.startedAt))")
+        print("Uptime  : \(uptimeString(since: status.startedAt))")
+    }
+
     static func stop(_ args: [String]) async {
-        // A VM's lifetime belongs to the process that started it, so a separate
-        // invocation cannot reach it. Report that honestly rather than pretend to
-        // have stopped something.
-        fail("""
-        macportctl cannot stop a VM started by another process yet.
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl stop <name> [--force]\n")
+        }
+        let force = args.contains("--force")
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
 
-        A virtual machine's lifecycle is owned by the process that booted it, and \
-        there is no control socket between invocations. Stopping one from a second \
-        command needs a host control channel in MacportKit — tracked for Phase 2.
+        _ = await send(.stop(graceful: !force), to: metadata, name: config.name)
+        // `stop` powers the guest off; `shutdownHost` retires the process that
+        // owns it, so a later `start` is not refused by a stale lock.
+        await shutdownHost(metadata)
 
-        For now: press Ctrl-C in the terminal that started it, or use the Macport app.
+        let exited = await waitForExit(pid: metadata.pid, timeout: 10)
+        if !exited && force {
+            kill(metadata.pid, SIGKILL)
+            _ = await waitForExit(pid: metadata.pid, timeout: 2)
+        }
 
-        """)
+        if VMHostRuntime.isProcessAlive(pid: metadata.pid) {
+            // Keep the record: the host is still discoverable and retryable
+            // with `stop --force`. Removing it here would orphan a live host.
+            fail("\(config.name) was asked to stop, but its host (pid \(metadata.pid)) has not exited yet.\n")
+        }
+        VMHostRuntime.removeMetadata(in: bundle)
+        print("Stopped \(config.name).")
+    }
+
+    static func pause(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl pause <name>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        _ = await send(.pause, to: metadata, name: config.name)
+        print("Paused \(config.name).")
+    }
+
+    static func resume(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl resume <name>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        _ = await send(.resume, to: metadata, name: config.name)
+        print("Resumed \(config.name).")
+    }
+
+    static func snapshots(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl snapshots <name>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        let response = await send(.snapshots, to: metadata, name: config.name)
+        guard case .snapshots(let snapshots)? = response.payload else {
+            fail("\(config.name): the host returned no snapshot list.\n")
+        }
+        if snapshots.isEmpty {
+            print("No snapshots for \(config.name).")
+            return
+        }
+
+        let idWidth = max(2, snapshots.map(\.id.count).max() ?? 2)
+        let nameWidth = max(4, snapshots.map(\.name.count).max() ?? 4)
+        print(
+            pad("ID", idWidth) + "  "
+                + pad("NAME", nameWidth) + "  "
+                + "CREATED             MEMORY"
+        )
+        for snapshot in snapshots.sorted(by: { $0.createdAt > $1.createdAt }) {
+            print(
+                pad(snapshot.id, idWidth) + "  "
+                    + pad(snapshot.name, nameWidth) + "  "
+                    + pad(dateString(snapshot.createdAt), 19) + "  "
+                    + (snapshot.includesMemory ? "yes" : "no")
+            )
+        }
+    }
+
+    static func snapshot(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl snapshot <name> --name <snapshot name>\n")
+        }
+        guard let snapshotName = value(of: "--name", in: args) else {
+            fail("Usage: macportctl snapshot <name> --name <snapshot name>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        let response = await send(.takeSnapshot(name: snapshotName), to: metadata, name: config.name)
+        guard case .snapshot(let snapshot)? = response.payload else {
+            fail("\(config.name): the host did not return the snapshot it created.\n")
+        }
+        print("Created '\(snapshot.name)' (id \(snapshot.id)).")
+    }
+
+    static func restore(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl restore <name> --snapshot <id>\n")
+        }
+        guard let snapshotID = value(of: "--snapshot", in: args) else {
+            fail("Usage: macportctl restore <name> --snapshot <id>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        _ = await send(.restoreSnapshot(id: snapshotID), to: metadata, name: config.name)
+        print("Restored \(config.name) to snapshot \(snapshotID).")
+    }
+
+    static func deleteSnapshot(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl delete-snapshot <name> --snapshot <id>\n")
+        }
+        guard let snapshotID = value(of: "--snapshot", in: args) else {
+            fail("Usage: macportctl delete-snapshot <name> --snapshot <id>\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+        let metadata = requireRunning(config, in: bundle)
+
+        _ = await send(.deleteSnapshot(id: snapshotID), to: metadata, name: config.name)
+        print("Deleted snapshot \(snapshotID) from \(config.name).")
+    }
+
+    static func clone(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl clone <name> [--as <new name>]\n")
+        }
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+
+        // A clone is a copy of bytes on disk. Copying a machine that is writing
+        // those bytes produces a disk that may not boot, and APFS clonefile is
+        // no more trustworthy while a guest is running.
+        if let metadata = VMHostRuntime.readMetadata(in: bundle) {
+            if VMHostRuntime.isProcessAlive(pid: metadata.pid) {
+                fail(
+                    "\(config.name) is running (pid \(metadata.pid)). Stop it first: "
+                        + "a clone must come from a quiescent disk.\n"
+                )
+            }
+            VMHostRuntime.removeMetadata(in: bundle)
+        }
+
+        do {
+            let clone = try await VMCloner.clone(
+                config,
+                in: store,
+                named: value(of: "--as", in: args) ?? ""
+            )
+            let cloneBundle = await store.bundleURL(for: clone)
+            print("Cloned \(config.name) as \(clone.name).")
+            print("  id     : \(clone.id.uuidString)")
+            print("  bundle : \(cloneBundle.path)")
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+    }
+
+    static func importImage(_ args: [String]) async {
+        guard let sourcePath = args.first, !sourcePath.hasPrefix("-") else {
+            fail("""
+            Usage: macportctl import <image> --name <name> --guest <kind> [options]
+
+              --guest <linux|windows>  Guest family (required)
+              --name <name>            Name for the new machine (required)
+              --disk <gb>              Disk ceiling in GB (default: image virtual size)
+              --engine <qemu|vz>       Pin an engine (default: chosen by guest)
+
+            """)
+        }
+        guard let name = value(of: "--name", in: args) else {
+            fail("import needs --name <name>.\n")
+        }
+        guard let guestRaw = value(of: "--guest", in: args),
+              let guest = parseGuest(guestRaw) else {
+            fail("import needs --guest <linux|windows>. '\(value(of: "--guest", in: args) ?? "")' is not a guest Macport can import.\n")
+        }
+        guard guest != .macOSGuest else {
+            fail("macOS guests need an IPSW restore path, which the disk importer does not provide yet.\n")
+        }
+
+        let source = URL(fileURLWithPath: sourcePath)
+        guard DiskImporter.isSupported(source) else {
+            fail(
+                "Macport cannot import \(source.pathExtension.isEmpty ? "a file with no extension" : ".\(source.pathExtension)"). "
+                    + "Supported: \(DiskImporter.supportedExtensions.sorted().joined(separator: ", ")).\n"
+            )
+        }
+
+        let engineArgument = value(of: "--engine", in: args)?.lowercased()
+        if let engineArgument, engineArgument != "qemu", engineArgument != "vz" {
+            fail("--engine must be qemu or vz, not '\(engineArgument)'.\n")
+        }
+        let engineType: any VMEngine.Type
+        switch engineArgument {
+        case "qemu":
+            engineType = QEMUEngine.self
+        case "vz":
+            engineType = VZEngine.self
+        default:
+            engineType = EngineRegistry.preferredType(for: guest)
+        }
+
+        if ObjectIdentifier(engineType) == ObjectIdentifier(VZEngine.self), guest == .windowsARM {
+            fail(
+                "Virtualization.framework cannot host Windows: it has no TPM or "
+                    + "optical device. Use --engine qemu.\n"
+            )
+        }
+        if case .failure(let error) = engineType.availability() {
+            fail("\(error.localizedDescription)\n")
+        }
+
+        let info: DiskImporter.DiskInfo
+        do {
+            info = try DiskImporter.inspect(source)
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+
+        var diskBytes = info.virtualSize ?? 0
+        if let gb = value(of: "--disk", in: args) {
+            guard let value = Int(gb), value > 0 else {
+                fail("--disk expects a positive whole number of gigabytes.\n")
+            }
+            diskBytes = UInt64(value) * 1024 * 1024 * 1024
+        }
+        guard diskBytes > 0 else {
+            fail("qemu-img did not report a virtual size for this image; pass --disk <gb>.\n")
+        }
+
+        var config = VMConfiguration(
+            name: name,
+            guest: guest,
+            diskBytes: diskBytes,
+            boot: .diskOnly
+        )
+        // Pin the engine that was chosen now. The disk format below is that
+        // engine's format, so a later availability change must not reroute the
+        // machine to an engine that cannot read it.
+        config.engineIdentifier = engineType.identifier
+
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+
+        // The exact names the engines' own `create` methods expect. QEMU probes
+        // `disk.qcow2` first (the snapshot-capable default); VZ opens `disk.img`
+        // and treats it as raw.
+        let isQEMU = ObjectIdentifier(engineType) == ObjectIdentifier(QEMUEngine.self)
+        let diskName = isQEMU ? "disk.qcow2" : "disk.img"
+        let format: DiskImporter.TargetFormat = isQEMU ? .qcow2 : .raw
+
+        do {
+            let saved = try await store.save(config)
+            let destination = await store.bundleURL(for: saved).appendingPathComponent(diskName)
+            _ = try DiskImporter.convert(source, to: destination, format: format)
+            print("Imported \(saved.name) as \(saved.id.uuidString)")
+            print("  engine : \(engineType.displayName)")
+            print("  disk   : \(destination.path) (\(info.format) → \(format.rawValue), \(saved.diskBytes.gbString))")
+        } catch {
+            // A half-converted bundle would appear in `list` and fail to boot.
+            try? FileManager.default.removeItem(at: bundle)
+            await store.load()
+            fail("\(error.localizedDescription)\n")
+        }
+    }
+
+    static func disk(_ args: [String]) async {
+        guard args.first == "convert", args.count >= 3 else {
+            fail("Usage: macportctl disk convert <source> <destination> [--format qcow2|raw]\n")
+        }
+        let source = URL(fileURLWithPath: args[1])
+        let destination = URL(fileURLWithPath: args[2])
+        let formatName = value(of: "--format", in: args) ?? "qcow2"
+        guard let format = DiskImporter.TargetFormat(rawValue: formatName) else {
+            fail("--format must be qcow2 or raw, not '\(formatName)'.\n")
+        }
+
+        do {
+            let info = try DiskImporter.convert(source, to: destination, format: format)
+            print("Converted \(source.path) → \(destination.path)")
+            print("  format : \(format.rawValue)")
+            print("  size   : \((info.virtualSize ?? 0).gbString)")
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+    }
+
+    static func delete(_ args: [String]) async {
+        guard let name = args.first, !name.hasPrefix("-") else {
+            fail("Usage: macportctl delete <name> [--force]\n")
+        }
+        let force = args.contains("--force")
+        guard let config = await find(name) else { exit(1) }
+        let store = await VMStore()
+        await store.load()
+        let bundle = await store.bundleURL(for: config)
+
+        if let metadata = VMHostRuntime.readMetadata(in: bundle),
+           VMHostRuntime.isProcessAlive(pid: metadata.pid) {
+            guard force else {
+                fail(
+                    "\(config.name) is running (pid \(metadata.pid)). Stop it first with "
+                        + "`macportctl stop \(config.name)`, or pass --force to stop and delete it.\n"
+                )
+            }
+            let client = VMControlClient(socketPath: metadata.socketPath)
+            _ = try? await client.send(VMControlRequest(command: .stop(graceful: false)))
+            await shutdownHost(metadata)
+            let exited = await waitForExit(pid: metadata.pid, timeout: 10)
+            if !exited {
+                kill(metadata.pid, SIGKILL)
+                _ = await waitForExit(pid: metadata.pid, timeout: 2)
+            }
+            if VMHostRuntime.isProcessAlive(pid: metadata.pid) {
+                fail("Could not stop the background host (pid \(metadata.pid)).\n")
+            }
+        }
+
+        // The store owns everything under its root, but a path that is not a
+        // `.macport` bundle means something is wrong with the record; deleting it
+        // would be the wrong repair.
+        guard bundle.pathExtension == "macport" else {
+            fail("Refusing to delete \(bundle.path): it is not a .macport bundle.\n")
+        }
+
+        do {
+            try FileManager.default.removeItem(at: bundle)
+        } catch {
+            fail("Could not delete \(bundle.path): \(error.localizedDescription)\n")
+        }
+        await store.load()
+        print("Deleted \(config.name).")
+    }
+
+    static func hostPath() {
+        do {
+            print(try VMHostLauncher.resolve().path)
+        } catch {
+            fail("\(error.localizedDescription)\n")
+        }
+    }
+
+    // MARK: - Control helpers
+
+    /// The metadata for a machine that is genuinely up.
+    ///
+    /// A live pid is not enough — a host can be wedged — but a dead pid is
+    /// conclusive, so its record is removed and the caller is told the machine is
+    /// not running rather than being handed a socket that cannot answer.
+    static func requireRunning(_ config: VMConfiguration, in bundle: URL) -> VMHostMetadata {
+        guard let metadata = VMHostRuntime.readMetadata(in: bundle) else {
+            fail("\(config.name) is not running.\n")
+        }
+        guard VMHostRuntime.isProcessAlive(pid: metadata.pid) else {
+            VMHostRuntime.removeMetadata(in: bundle)
+            fail("\(config.name) is not running (its recorded pid \(metadata.pid) has exited).\n")
+        }
+        return metadata
+    }
+
+    static func send(
+        _ command: VMControlCommand,
+        to metadata: VMHostMetadata,
+        name: String
+    ) async -> VMControlResponse {
+        let client = VMControlClient(socketPath: metadata.socketPath)
+        do {
+            let response = try await client.send(VMControlRequest(command: command))
+            guard response.ok else {
+                fail("\(name): \(response.error ?? "the background host refused the command")\n")
+            }
+            return response
+        } catch {
+            fail("\(name): \(error.localizedDescription)\n")
+        }
+    }
+
+    /// Best-effort retirement of the host process. The caller waits for the pid.
+    static func shutdownHost(_ metadata: VMHostMetadata) async {
+        let client = VMControlClient(
+            socketPath: metadata.socketPath,
+            connectTimeout: 2,
+            commandTimeout: 5
+        )
+        _ = try? await client.send(VMControlRequest(command: .shutdownHost))
+    }
+
+    static func waitForExit(pid: Int32, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !VMHostRuntime.isProcessAlive(pid: pid) { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return !VMHostRuntime.isProcessAlive(pid: pid)
+    }
+
+    static func dateString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    static func uptimeString(since date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let remainder = seconds % 60
+        if hours > 0 { return "\(hours)h \(minutes)m \(remainder)s" }
+        if minutes > 0 { return "\(minutes)m \(remainder)s" }
+        return "\(remainder)s"
     }
 
     // MARK: - Configuration from flags
@@ -448,7 +1001,23 @@ struct MacportCtl {
               runtime [status|install]   Inspect or install the QEMU runtime
               create <name> [options]    Create a VM
               start <name> [options]     Boot a VM (creates its disk on first run)
-              stop <name>                Not supported yet — see below
+              stop <name> [--force]      Stop a running VM
+              status <name> [--json]     Show state, engine, pid and uptime
+              pause <name>               Suspend a running guest in memory
+              resume <name>              Continue a paused guest
+              snapshots <name>           List snapshots
+              snapshot <name> --name <n> Create a snapshot
+              restore <name> --snapshot <id>
+                                         Restore a snapshot
+              delete-snapshot <name> --snapshot <id>
+                                         Delete a snapshot
+              clone <name> [--as <name>] Clone a stopped VM
+              import <image> --name <name> --guest <kind> [--disk <gb>] [--engine qemu|vz]
+                                         Create a VM from an existing disk image
+              disk convert <src> <dst> [--format qcow2|raw]
+                                         Convert a disk image
+              delete <name> [--force]    Delete a VM and its bundle
+              host-path                  Print the resolved MacportVMHost path
               path                       Print the VM storage directory
               help                       Show this message
 
@@ -461,16 +1030,20 @@ struct MacportCtl {
               --engine <vz|qemu>         Pin an engine; by default the guest decides
               --shared-folder <path>     Share a host directory, read-only
               --no-network               Leave the guest disconnected
+              --foreground               (start) run the QEMU host in this terminal
 
             ENGINES
               Virtualization.framework runs a guest on the metal with virtio devices.
               It is the leaner engine and is preferred whenever it can host the guest.
+              Its display is bound to the process that creates it, so VZ guests stop
+              with the app or CLI that started them.
 
               QEMU adds what that framework does not have — a real CD-ROM device, and
               so the ability to boot vendor installer media. Windows 11 Arm needs it,
               because Windows installers carry no MBR, no GPT and no FAT ESP and
               bootstrap purely through El Torito, which firmware only honours on media
-              it identifies as optical.
+              it identifies as optical. QEMU machines run in a per-VM MacportVMHost
+              process and keep running when the app or this command exits.
 
             NOTES
               No engine Macport ships provides a virtual TPM yet, so Windows 11 setup

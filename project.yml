@@ -94,6 +94,22 @@ targets:
       CODE_SIGN_STYLE: Automatic
       CODE_SIGN_ENTITLEMENTS: MacportCtl/MacportCtl.entitlements
 
+  # One process per QEMU machine. It owns the QEMU child, the QMP connection and
+  # the control socket, which is what lets a guest outlive the app.
+  MacportVMHost:
+    type: tool
+    platform: macOS
+    sources:
+      - path: MacportVMHost
+    dependencies:
+      - target: MacportKit
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macportvmhost
+      PRODUCT_NAME: MacportVMHost
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: MacportVMHost/MacportVMHost.entitlements
+
   # Pure-logic tests for the shared model and engine routing. No guest boots,
   # no window opens and no QEMU runtime is required; engine-specific tests live
   # beside the workstream that implements them.
@@ -134,6 +150,19 @@ schemes:
     build:
       targets:
         MacportCtl: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+  MacportVMHost:
+    build:
+      targets:
+        MacportVMHost: all
     run:
       config: Debug
     profile:
