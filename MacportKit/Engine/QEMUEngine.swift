@@ -71,16 +71,15 @@ public final class QEMUEngine: NSObject, VMEngine {
             opticalMedia: true,
             nestedVirtualization: false,
             graphics: .none,
-            snapshots: false,
+            snapshots: true,
             sharedFolders: false,
             usbPassthrough: false,
             foreignArchitectureEmulation: false,
-            // QEMU and QMP can do all of these; Macport wires each one up in
-            // workstream B (pause/resume/snapshots) and C (per-VM host process).
-            // Reported false until the code actually does it — a capability is a
-            // promise, not a possibility.
-            pauseResume: false,
-            saveState: false,
+            // QEMU/QMP support all of these and Workstream B wired the
+            // primitives. A raw disk still refuses snapshots at call time with a
+            // conversion instruction; the engine-level capability is honest.
+            pauseResume: true,
+            saveState: true,
             backgroundHosting: true,
             diskImport: true
         )
@@ -551,6 +550,46 @@ public final class QEMUEngine: NSObject, VMEngine {
         let channel = try controlChannel(for: "Delete snapshot")
         let tag = Self.sanitizeSnapshotName(id)
         _ = try await Self.humanMonitor("delvm \(tag)", on: channel)
+    }
+
+    // MARK: - VMEngine v2 bridge
+
+    // Workstream B implemented the QEMU-facing primitives above; these adapters
+    // expose them through the engine protocol without duplicating any logic. The
+    // split kept B compiling independently of A's protocol addition, and keeps
+    // the QMP details out of the registry.
+
+    public func pause() async throws {
+        try await pauseMachine()
+    }
+
+    public func resume() async throws {
+        try await resumeMachine()
+    }
+
+    public func listSnapshots() async throws -> [VMSnapshot] {
+        try await listMachineSnapshots().map(Self.protocolSnapshot)
+    }
+
+    public func takeSnapshot(named name: String) async throws -> VMSnapshot {
+        Self.protocolSnapshot(try await takeMachineSnapshot(named: name))
+    }
+
+    public func restoreSnapshot(id: String) async throws {
+        try await restoreMachineSnapshot(id: id)
+    }
+
+    public func deleteSnapshot(id: String) async throws {
+        try await deleteMachineSnapshot(id: id)
+    }
+
+    private nonisolated static func protocolSnapshot(_ snapshot: QEMUSnapshot) -> VMSnapshot {
+        VMSnapshot(
+            id: snapshot.id,
+            name: snapshot.name,
+            createdAt: snapshot.createdAt,
+            includesMemory: snapshot.includesMemory
+        )
     }
 
     /// The QMP channel, or a clear error saying why there is none.

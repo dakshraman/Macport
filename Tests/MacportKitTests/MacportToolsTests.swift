@@ -15,8 +15,8 @@ final class MacportToolsTests: XCTestCase {
 
         let override = directory.appendingPathComponent("override.iso")
         let cached = directory.appendingPathComponent("cache.iso")
-        try write("x", at: override)
-        try write("x", at: cached)
+        try writeContents("x", at: override)
+        try writeContents("x", at: cached)
 
         let resolved = MacportTools.resolve(
             environment: [MacportTools.environmentOverride: override.path],
@@ -30,7 +30,7 @@ final class MacportToolsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let cached = directory.appendingPathComponent("cache.iso")
-        try write("x", at: cached)
+        try writeContents("x", at: cached)
 
         let resolved = MacportTools.resolve(environment: [:], cachedISO: cached)
         XCTAssertEqual(resolved, cached)
@@ -41,7 +41,7 @@ final class MacportToolsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let cached = directory.appendingPathComponent("cache.iso")
-        try write("x", at: cached)
+        try writeContents("x", at: cached)
 
         let resolved = MacportTools.resolve(
             environment: [MacportTools.environmentOverride: directory.appendingPathComponent("gone.iso").path],
@@ -95,7 +95,7 @@ final class MacportToolsTests: XCTestCase {
         let report = try MacportTools.stageDriverTrees(from: source, into: staging)
 
         XCTAssertEqual(report.names, ["NetKVM", "viostor", "Balloon", "vioser", "viogpudo"])
-        XCTAssertEqual(report.missing, ["vioscsi"])
+        XCTAssertEqual(report.missing, ["vioscsi", "viofs"])
 
         let drivers = staging.appendingPathComponent("drivers", isDirectory: true)
         XCTAssertEqual(try text(of: drivers.appendingPathComponent("NetKVM/arm64/netkvm.inf")), "w11")
@@ -347,7 +347,7 @@ final class MacportToolsTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func write(_ contents: String, at url: URL) throws {
+    private func writeContents(_ contents: String, at url: URL) throws {
         try Data(contents.utf8).write(to: url)
     }
 }
