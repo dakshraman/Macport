@@ -206,14 +206,51 @@ public final class QEMUEngine: NSObject, VMEngine {
         let log = try FileHandle(forWritingTo: logURL)
         try log.truncate(atOffset: 0)
 
+        // Macport Tools: the driver disc Windows needs for virtio devices and the
+        // only place an Arm64 guest can get them without a second download. It is
+        // built once per bundle and reused until the source ISO is replaced.
+        //
+        // Building it is best-effort. A machine without a driver disc still boots
+        // and installs (NVMe is inbox), so failing to make one must not fail the
+        // boot; the reason is written next to the bundle so it is discoverable
+        // instead of silent.
+        var toolsMedia: URL?
+        if config.guest == .windowsARM, let toolsSource = MacportTools.resolve() {
+            let destination = bundle.appendingPathComponent(Self.toolsMediaFileName)
+            do {
+                if Self.toolsMediaNeedsBuild(at: destination, source: toolsSource) {
+                    let guest = config.guest
+                    toolsMedia = try await Task.detached(priority: .userInitiated) {
+                        try MacportTools.prepareMedia(
+                            for: guest,
+                            at: destination,
+                            iso: toolsSource
+                        )
+                    }.value
+                } else {
+                    toolsMedia = destination
+                }
+            } catch {
+                toolsMedia = nil
+                let warning = bundle.appendingPathComponent(Self.toolsWarningFileName)
+                try? Data(
+                    ("Macport Tools media was not built: \(error.localizedDescription)\n")
+                        .utf8
+                ).write(to: warning)
+            }
+        }
+
         // Windows cannot be installed without a TPM to show it, so an installation has
         // to be handed the answer file that tells Setup to carry on without one.
         //
-        // Written before launch, and a failure to write it is *reported* rather than
-        // swallowed: the alternative is a machine that starts and then parks on a screen
-        // the user cannot pass, with nothing anywhere saying why.
+        // When the Tools disc is present it carries that answer file itself (with
+        // the driver paths already pointing at its own `drivers` directory), so a
+        // second answer disc would only give Setup two copies to choose between.
+        // Without it, the standalone FAT volume is still required.
         var answerMedia: URL?
-        if case .installMedia = config.boot, UnattendMedia.isNeeded(for: config.guest) {
+        if case .installMedia = config.boot,
+           UnattendMedia.isNeeded(for: config.guest),
+           toolsMedia == nil {
             let url = bundle.appendingPathComponent(Self.answerMediaFileName)
             try UnattendMedia.create(for: config.guest, at: url)
             answerMedia = url
@@ -225,7 +262,8 @@ public final class QEMUEngine: NSObject, VMEngine {
             for: config,
             bundle: bundle,
             firmware: firmware,
-            answerMedia: answerMedia
+            answerMedia: answerMedia,
+            toolsMedia: toolsMedia
         )
         task.standardOutput = log
         task.standardError = log
@@ -1008,7 +1046,32 @@ public final class QEMUEngine: NSObject, VMEngine {
     nonisolated private static let consoleFileName = "console.log"
     /// The removable disk carrying Setup's answer file, when one is needed.
     nonisolated private static let answerMediaFileName = "answer-media.img"
+    /// The generated driver disc. Not shipped: built from the user's virtio-win
+    /// ISO so Macport never redistributes Microsoft's signed driver package.
+    nonisolated private static let toolsMediaFileName = "tools-media.iso"
+    /// Why the driver disc could not be built, left where a person will look.
+    nonisolated private static let toolsWarningFileName = "tools-media-warning.txt"
     nonisolated private static let defaultVariableStoreBytes: UInt64 = 64 * 1024 * 1024
+
+    /// Whether the cached Tools disc is older than the ISO it was built from.
+    ///
+    /// Modification time rather than a digest: rebuilding is cheap relative to a
+    /// Windows install, and a false positive costs one extra staging pass. A
+    /// missing or empty destination always rebuilds.
+    nonisolated static func toolsMediaNeedsBuild(at destination: URL, source: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard
+            let destinationAttributes = try? fileManager.attributesOfItem(atPath: destination.path),
+            let destinationDate = destinationAttributes[.modificationDate] as? Date,
+            let size = destinationAttributes[.size] as? NSNumber,
+            size.int64Value > 0,
+            let sourceAttributes = try? fileManager.attributesOfItem(atPath: source.path),
+            let sourceDate = sourceAttributes[.modificationDate] as? Date
+        else {
+            return true
+        }
+        return sourceDate > destinationDate
+    }
 
     /// How many quarter-second checks to make while waiting for the firmware to reach
     /// its first boot attempt — one minute's worth.
@@ -1085,7 +1148,8 @@ public final class QEMUEngine: NSObject, VMEngine {
         for config: VMConfiguration,
         bundle: URL,
         firmware: (code: URL, varsTemplate: URL?),
-        answerMedia: URL?
+        answerMedia: URL?,
+        toolsMedia: URL?
     ) -> [String] {
         var args: [String] = []
 
@@ -1203,6 +1267,25 @@ public final class QEMUEngine: NSObject, VMEngine {
                 "if=none,id=cd0,media=cdrom,readonly=on,file.locking=off,file=\(path)",
             ]
             args += ["-device", "scsi-cd,bus=usbcd.0,drive=cd0"]
+        }
+
+        // The Macport Tools disc: a second USB CD-ROM carrying the Arm64 virtio
+        // drivers and the answer file that points Setup at them.
+        //
+        // It is a separate device rather than a directory on the installer ISO
+        // because the installer ISO is the user's, often read-only and sometimes
+        // still mounted; Macport must not rewrite it. Windows assigns the two CDs
+        // in attachment order (installer then Tools), which is why the generated
+        // answer file uses E: — the assumption is stated in one place
+        // (`MacportTools.defaultDriveLetter`) and is the only guest-side path
+        // Macport cannot discover from the host.
+        if let toolsMedia {
+            args += ["-device", "usb-bot,bus=usb-controller.0,id=usbtools"]
+            args += [
+                "-drive",
+                "if=none,id=tools0,media=cdrom,readonly=on,file.locking=off,file=\(toolsMedia.path)",
+            ]
+            args += ["-device", "scsi-cd,bus=usbtools.0,drive=tools0"]
         }
 
         // The media carrying Setup's answer file, when the machine needs one.
