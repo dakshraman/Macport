@@ -25,8 +25,16 @@ public final class VMRuntimeRegistry: ObservableObject {
     /// changing anything above this line.
     public let refreshInterval: Duration
 
-    /// Host resources every start is checked against. Injectable for tests.
-    public let capacity: HostCapacity
+    /// Host resources every start is checked against.
+    ///
+    /// `nil` means "probe the real host for every start", which is what the app
+    /// uses: free disk space changes while Macport is open, and an admission
+    /// decision based on launch-time numbers would eventually be a lie. Tests
+    /// inject a fixed value so their numbers are the scenario's, not the Mac's.
+    private let capacityOverride: HostCapacity?
+
+    /// The capacity used by the next start.
+    public var capacity: HostCapacity { capacityOverride ?? .current }
 
     /// Builds the engine for a configuration. Injectable so tests can run against
     /// a mock instead of a hypervisor.
@@ -47,14 +55,14 @@ public final class VMRuntimeRegistry: ObservableObject {
     private var startingIDs: Set<UUID> = []
 
     public init(
-        capacity: HostCapacity = .current,
+        capacity: HostCapacity? = nil,
         refreshInterval: Duration = .milliseconds(250),
         engineFactory: @escaping EngineFactory = { EngineRegistry.makeEngine(for: $0) },
         availabilityCheck: @escaping AvailabilityCheck = {
             EngineRegistry.engineType(for: $0).availability()
         }
     ) {
-        self.capacity = capacity
+        self.capacityOverride = capacity
         self.refreshInterval = refreshInterval
         self.engineFactory = engineFactory
         self.availabilityCheck = availabilityCheck
