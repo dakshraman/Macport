@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import Foundation
 
 /// Owns every running virtual machine, and the admission decision that lets one
@@ -44,9 +45,27 @@ public final class VMRuntimeRegistry: ObservableObject {
     /// Injectable for the same reason as `engineFactory`.
     public typealias AvailabilityCheck = @MainActor (VMConfiguration) -> Result<Void, EngineError>
 
+    /// Launches a background host and returns the metadata it published.
+    /// Injectable so tests never need a host binary and never spawn a process.
+    public typealias HostStarter = @MainActor (VMConfiguration, VMStore) async throws -> VMHostMetadata
+
+    /// Whether the per-VM host executable can be found at all.
+    ///
+    /// When it cannot, QEMU falls back to the in-process engine. That is the
+    /// honest behaviour for tests and for a development build that has not put
+    /// the host next to the app yet.
+    public typealias HostAvailability = @MainActor () -> Bool
+
     private let engineFactory: EngineFactory
     private let availabilityCheck: AvailabilityCheck
+    private let hostAvailability: HostAvailability
+    private let hostStarter: HostStarter
     private var refreshTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Bundles for instances whose engine lives in a host process. Kept here
+    /// because `VMInstance` describes a machine, not the registry's bookkeeping,
+    /// and `stop` needs somewhere to remove `runtime.json`.
+    private var hostBundles: [UUID: URL] = [:]
 
     /// Ids with a start in flight. `start` suspends across `engine.create` and
     /// `engine.start`, and `@MainActor` alone does not stop a second call from
@@ -60,12 +79,24 @@ public final class VMRuntimeRegistry: ObservableObject {
         engineFactory: @escaping EngineFactory = { EngineRegistry.makeEngine(for: $0) },
         availabilityCheck: @escaping AvailabilityCheck = {
             EngineRegistry.engineType(for: $0).availability()
+        },
+        hostAvailability: @escaping HostAvailability = { VMHostLauncher.isAvailable },
+        hostStarter: @escaping HostStarter = { config, store in
+            let bundle = store.bundleURL(for: config)
+            return try await VMHostLauncher.launchDetached(
+                config,
+                bundle: bundle,
+                socketPath: VMHostRuntime.socketPath(for: bundle, vmID: config.id),
+                logURL: VMHostRuntime.hostLogURL(in: bundle)
+            )
         }
     ) {
         self.capacityOverride = capacity
         self.refreshInterval = refreshInterval
         self.engineFactory = engineFactory
         self.availabilityCheck = availabilityCheck
+        self.hostAvailability = hostAvailability
+        self.hostStarter = hostStarter
     }
 
     // MARK: - Queries
@@ -118,6 +149,16 @@ public final class VMRuntimeRegistry: ObservableObject {
         startingIDs.insert(id)
         defer { startingIDs.remove(id) }
 
+        // QEMU is hosted per VM when the host executable is present, because a
+        // guest that survives the app is the whole point of the host. Without
+        // the executable — tests, a development build that has not copied it
+        // next to the app — the in-process engine still works, and saying so is
+        // better than refusing to boot a machine that could boot.
+        if routesToBackgroundHost(config) {
+            try await startBackground(config, in: store)
+            return
+        }
+
         let engine = engineFactory(config)
         let bundle = store.bundleURL(for: config)
         try await engine.create(config, in: bundle)
@@ -128,6 +169,118 @@ public final class VMRuntimeRegistry: ObservableObject {
         let instance = VMInstance(config: config, engine: engine)
         instances[id] = instance
         startRefreshTask(for: id)
+    }
+
+    /// Does this configuration run in a background host on this machine?
+    private func routesToBackgroundHost(_ config: VMConfiguration) -> Bool {
+        ObjectIdentifier(EngineRegistry.engineType(for: config)) == ObjectIdentifier(QEMUEngine.self)
+            && hostAvailability()
+    }
+
+    /// Spawn the host, wait for it to answer, and hold a proxy to it.
+    private func startBackground(_ config: VMConfiguration, in store: VMStore) async throws {
+        let metadata = try await hostStarter(config, store)
+        try await attachProxy(config: config, metadata: metadata, bundle: store.bundleURL(for: config))
+    }
+
+    /// Build the proxy for a host that is already answering, and publish it.
+    private func attachProxy(
+        config: VMConfiguration,
+        metadata: VMHostMetadata,
+        bundle: URL
+    ) async throws {
+        let client = VMControlClient(socketPath: metadata.socketPath)
+        let proxy = VMHostProxy(channel: client, metadata: metadata, initialState: .starting)
+        await proxy.refreshNow()
+
+        guard proxy.state.isActive else {
+            // A host that answered but reports a stopped machine is a start
+            // that did not happen; do not leave a live process holding `.lock`.
+            try? await proxy.stop()
+            VMHostRuntime.removeMetadata(in: bundle)
+            throw EngineError.operationFailed(
+                "The background host did not report \(config.name) as running."
+            )
+        }
+
+        instances[config.id] = VMInstance(
+            config: config,
+            engine: proxy,
+            engineName: QEMUEngine.displayName,
+            startedAt: metadata.startedAt,
+            hostMetadata: metadata
+        )
+        hostBundles[config.id] = bundle
+        startRefreshTask(for: config.id)
+    }
+
+    /// Adopt every QEMU machine whose host is still running.
+    ///
+    /// Called when a fresh app process starts: a host outlives the app that
+    /// launched it, so a window that ignored `runtime.json` would claim a
+    /// running machine had vanished. Stale records — dead pid, unreadable
+    /// metadata, a socket that no longer answers — are removed rather than
+    /// believed.
+    public func adoptRunningHosts(in root: URL = VMStore.defaultRoot) async {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for bundle in entries where bundle.pathExtension == "macport" {
+            let runtimeURL = VMHostRuntime.runtimeFileURL(in: bundle)
+            guard fileManager.fileExists(atPath: runtimeURL.path) else { continue }
+
+            guard let metadata = VMHostRuntime.readMetadata(in: bundle) else {
+                VMHostRuntime.removeMetadata(in: bundle)
+                continue
+            }
+            guard metadata.engineIdentifier == QEMUEngine.identifier,
+                  VMHostRuntime.isProcessAlive(pid: metadata.pid) else {
+                VMHostRuntime.removeMetadata(in: bundle)
+                continue
+            }
+
+            let configFile = bundle.appendingPathComponent("config.json", isDirectory: false)
+            guard let data = try? Data(contentsOf: configFile),
+                  let config = try? JSONDecoder().decode(VMConfiguration.self, from: data) else {
+                continue
+            }
+            // A record alone is not enough: the machine must still be one the
+            // host is allowed to own. A config edited to pin VZ after the host
+            // started must not be adopted as a QEMU proxy.
+            guard ObjectIdentifier(EngineRegistry.engineType(for: config))
+                    == ObjectIdentifier(QEMUEngine.self) else {
+                VMHostRuntime.removeMetadata(in: bundle)
+                continue
+            }
+            if let existing = instances[config.id], existing.state.isActive { continue }
+
+            let client = VMControlClient(socketPath: metadata.socketPath)
+            guard let response = try? await client.send(VMControlRequest(command: .status)),
+                  response.ok,
+                  case .status(let status)? = response.payload,
+                  status.state.isActive else {
+                VMHostRuntime.removeMetadata(in: bundle)
+                continue
+            }
+
+            let state = status.paused ? VMState.paused : status.state
+            let proxy = VMHostProxy(channel: client, metadata: metadata, initialState: state)
+            instances[config.id] = VMInstance(
+                config: config,
+                engine: proxy,
+                engineName: QEMUEngine.displayName,
+                startedAt: metadata.startedAt,
+                hostMetadata: metadata
+            )
+            hostBundles[config.id] = bundle
+            startRefreshTask(for: config.id)
+        }
     }
 
     /// Power a VM off.
@@ -149,8 +302,46 @@ public final class VMRuntimeRegistry: ObservableObject {
             try await instance.engine.forceStop()
         }
 
+        if let metadata = instance.hostMetadata {
+            try await finishHostStop(metadata: metadata, graceful: graceful)
+            if let bundle = hostBundles[id] {
+                VMHostRuntime.removeMetadata(in: bundle)
+            }
+        }
+
         cancelRefreshTask(for: id)
         instances.removeValue(forKey: id)
+        hostBundles.removeValue(forKey: id)
+    }
+
+    /// Wait for a host to exit, escalating only when the caller asked for force.
+    ///
+    /// A host that ignores `shutdownHost` must not leave a running QEMU behind a
+    /// registry that has forgotten it. A graceful stop that is merely slow is
+    /// reported rather than killed: the guest may be flushing its filesystems.
+    private func finishHostStop(metadata: VMHostMetadata, graceful: Bool) async throws {
+        var exited = await waitForExit(pid: metadata.pid, timeout: 10)
+        if !exited && !graceful {
+            kill(metadata.pid, SIGKILL)
+            exited = await waitForExit(pid: metadata.pid, timeout: 2)
+        }
+        guard exited else {
+            throw EngineError.operationFailed(
+                "The background host (pid \(metadata.pid)) has not exited yet. "
+                    + (graceful
+                        ? "It is still shutting the guest down; try `stop --force`."
+                        : "It ignored SIGKILL, which is unusual; check the process.")
+            )
+        }
+    }
+
+    private func waitForExit(pid: Int32, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !VMHostRuntime.isProcessAlive(pid: pid) { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return !VMHostRuntime.isProcessAlive(pid: pid)
     }
 
     public func pause(_ id: UUID) async throws {

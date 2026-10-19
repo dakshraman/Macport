@@ -31,13 +31,24 @@ public final class VMInstance: ObservableObject, Identifiable {
     /// True for QEMU, which opens its own Cocoa window. Surfaced per instance
     /// because with several VMs running, "the guest is somewhere else" is a fact
     /// about *this* machine, not about the app.
+    ///
+    /// Deriving it from the routed engine rather than from the concrete instance
+    /// type is what keeps this honest for a `VMHostProxy`: the proxy is a
+    /// different class, but the machine is still a QEMU guest in its own window.
     @Published public private(set) var runsInExternalWindow: Bool
+
+    /// The background host that owns this machine, when there is one.
+    ///
+    /// Present for hosted QEMU machines so the UI and CLI can name the pid; nil
+    /// for in-process engines, which have no separate process to describe.
+    public let hostMetadata: VMHostMetadata?
 
     public init(
         config: VMConfiguration,
         engine: any VMEngine,
         engineName: String? = nil,
-        startedAt: Date? = Date()
+        startedAt: Date? = Date(),
+        hostMetadata: VMHostMetadata? = nil
     ) {
         self.id = config.id
         self.config = config
@@ -46,7 +57,9 @@ public final class VMInstance: ObservableObject, Identifiable {
         self.state = engine.state
         self.lastError = engine.lastError
         self.startedAt = startedAt
-        self.runsInExternalWindow = engine is QEMUEngine
+        self.hostMetadata = hostMetadata
+        self.runsInExternalWindow =
+            ObjectIdentifier(EngineRegistry.engineType(for: config)) == ObjectIdentifier(QEMUEngine.self)
     }
 
     /// Copy the engine's live state into this instance.

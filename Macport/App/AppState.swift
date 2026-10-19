@@ -53,6 +53,11 @@ final class AppState: ObservableObject {
                     self?.objectWillChange.send()
                 }
             }
+
+        // A QEMU host outlives the app that launched it. Without this the window
+        // would show a running machine as absent after a relaunch; the registry
+        // verifies pid and socket before believing a runtime.json record.
+        Task { await registry.adoptRunningHosts() }
     }
 
     // MARK: - Engine selection
