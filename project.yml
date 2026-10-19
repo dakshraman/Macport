@@ -93,3 +93,53 @@ targets:
       MACOSX_DEPLOYMENT_TARGET: "14.0"
       CODE_SIGN_STYLE: Automatic
       CODE_SIGN_ENTITLEMENTS: MacportCtl/MacportCtl.entitlements
+
+  # Pure-logic tests for the shared model and engine routing. No guest boots,
+  # no window opens and no QEMU runtime is required; engine-specific tests live
+  # beside the workstream that implements them.
+  MacportKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MacportKitTests
+    dependencies:
+      - target: MacportKit
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macportkittests
+      PRODUCT_NAME: MacportKitTests
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      GENERATE_INFOPLIST_FILE: YES
+      CODE_SIGN_STYLE: Automatic
+
+schemes:
+  Macport:
+    build:
+      targets:
+        Macport: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - MacportKitTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+  MacportCtl:
+    build:
+      targets:
+        MacportCtl: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
