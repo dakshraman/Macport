@@ -50,7 +50,17 @@ public final class VZEngine: NSObject, VMEngine {
             snapshots: false,           // framework exposes no snapshot primitive
             sharedFolders: true,        // virtiofs via VZVirtioFileSystemDevice
             usbPassthrough: guest == .macOSGuest, // USB controllers are macOS-guest only
-            foreignArchitectureEmulation: false
+            foreignArchitectureEmulation: false,
+            // VZVirtualMachine has pause()/resume(): the guest stays in host
+            // memory, which is a real suspend, not a save. The framework has no
+            // primitive that writes RAM or a disk delta to the bundle, so
+            // snapshots and save-state are honestly false.
+            pauseResume: true,
+            saveState: false,
+            // The display object is bound to the process that created it, so
+            // this engine cannot outlive the app. See the class comment.
+            backgroundHosting: false,
+            diskImport: false
         )
     }
 
@@ -153,6 +163,60 @@ public final class VZEngine: NSObject, VMEngine {
         try await machine.stop()
         state = .stopped
         self.machine = nil
+    }
+
+    // MARK: - Pause and resume
+
+    /// Suspend the guest in host memory.
+    ///
+    /// Maps the framework's transitional state (`.pausing`, `.resuming`) onto
+    /// `VMState`'s equivalents so the registry's 250 ms poll reports the truth
+    /// during the transition rather than jumping straight to `.paused`.
+    public func pause() async throws {
+        guard let machine else {
+            throw EngineError.operationFailed("No running virtual machine to pause.")
+        }
+        guard machine.state == .running else {
+            throw EngineError.operationFailed(
+                "Only a running virtual machine can be paused; this one is "
+                    + "\(Self.map(machine.state).rawValue)."
+            )
+        }
+
+        state = .pausing
+        do {
+            try await machine.pause()
+            state = Self.map(machine.state)
+        } catch {
+            // The request failed but the guest may still be alive — report the
+            // framework's own state rather than guessing.
+            state = Self.map(machine.state)
+            lastError = error.localizedDescription
+            throw EngineError.operationFailed("Could not pause: \(error.localizedDescription)")
+        }
+    }
+
+    /// Continue a paused guest.
+    public func resume() async throws {
+        guard let machine else {
+            throw EngineError.operationFailed("No running virtual machine to resume.")
+        }
+        guard machine.state == .paused else {
+            throw EngineError.operationFailed(
+                "Only a paused virtual machine can be resumed; this one is "
+                    + "\(Self.map(machine.state).rawValue)."
+            )
+        }
+
+        state = .starting
+        do {
+            try await machine.resume()
+            state = Self.map(machine.state)
+        } catch {
+            state = Self.map(machine.state)
+            lastError = error.localizedDescription
+            throw EngineError.operationFailed("Could not resume: \(error.localizedDescription)")
+        }
     }
 
     /// The live machine, for embedding in a `VZVirtualMachineView`.

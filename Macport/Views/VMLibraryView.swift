@@ -22,7 +22,7 @@ struct VMLibraryView: View {
                             Button("Delete…", role: .destructive) {
                                 delete(config)
                             }
-                            .disabled(state.runningVMID == config.id)
+                            .disabled(state.isRunning(config.id))
                         }
                 }
             }
@@ -54,7 +54,7 @@ private struct VMRow: View {
     @EnvironmentObject private var state: AppState
     let config: VMConfiguration
 
-    private var isRunning: Bool { state.runningVMID == config.id }
+    private var isRunning: Bool { state.isRunning(config.id) }
 
     var body: some View {
         HStack(spacing: 10) {
