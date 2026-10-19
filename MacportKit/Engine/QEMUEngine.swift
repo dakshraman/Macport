@@ -21,6 +21,44 @@ public final class QEMUEngine: NSObject, VMEngine {
     nonisolated public static let identifier = "qemu"
     nonisolated public static let displayName = "QEMU"
 
+    /// One QEMU internal snapshot, as the engine sees it.
+    ///
+    /// A snapshot's engine-side identity *is* its qcow2 tag; QEMU stores no
+    /// separate display name. `name` therefore repeats `id` here, and a pretty
+    /// name lives in the bundle's `Snapshots/index.json` from the caller that
+    /// created it. This type is deliberately separate from the engine
+    /// protocol's `VMSnapshot`; the integration pass maps one onto the other.
+    public struct QEMUSnapshot: Codable, Hashable, Identifiable, Sendable {
+        /// The engine tag — what a restore or delete names.
+        public var id: String
+        /// Display name; equals `id` because that is all QEMU stores.
+        public var name: String
+        public var createdAt: Date
+        /// Whether guest RAM was saved alongside the disk (`savevm` includes it
+        /// when the machine's devices all support state serialisation).
+        public var includesMemory: Bool
+
+        public init(id: String, name: String, createdAt: Date, includesMemory: Bool) {
+            self.id = id
+            self.name = name
+            self.createdAt = createdAt
+            self.includesMemory = includesMemory
+        }
+    }
+
+    /// Block format of the root disk. Only qcow2 can carry snapshots.
+    enum DiskFormat: String, Sendable {
+        case raw
+        case qcow2
+    }
+
+    /// The root disk as found on disk, with the format read from its header
+    /// rather than assumed from its name.
+    struct DiskImage: Equatable {
+        var url: URL
+        var format: DiskFormat
+    }
+
     nonisolated public static func capabilities(for guest: GuestKind) -> EngineCapabilities {
         EngineCapabilities(
             // Everything reported false here is false because Macport does not wire
@@ -79,6 +117,21 @@ public final class QEMUEngine: NSObject, VMEngine {
     /// Recorded at start rather than re-derived, because it deliberately does *not*
     /// live in the VM bundle — see `monitorSocketPath(for:)`.
     private var monitorPath: String?
+    /// QEMU's structured control channel, negotiated after launch.
+    ///
+    /// `nil` when the machine is not running, or when QEMU never listened — in
+    /// which case `qmpUnavailableReason` says what happened and the QMP-backed
+    /// operations (pause, resume, snapshots) report that reason instead of
+    /// failing obscurely. A missing control channel never stops a boot.
+    private var qmp: QMPClient?
+    /// Why the QMP channel could not be reached, worded for a user.
+    private var qmpUnavailableReason: String?
+    /// The bundle this machine was created or started in.
+    ///
+    /// Snapshot commands inspect the disk image inside it, and re-deriving the
+    /// path from the configuration would mean re-resolving the store and could
+    /// disagree with what was actually booted.
+    private var bundlePath: URL?
 
     public override init() { super.init() }
 
@@ -89,17 +142,13 @@ public final class QEMUEngine: NSObject, VMEngine {
         let firmware = try Self.resolvedFirmware(for: tool)
         let fm = FileManager.default
         try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+        bundlePath = bundle
 
-        // Root disk. A sparse file: an 80 GB ceiling costs nothing until the guest
-        // actually writes, which is what makes declaring generous disk sizes safe.
-        let disk = bundle.appendingPathComponent(Self.diskFileName)
-        if !fm.fileExists(atPath: disk.path) {
-            guard fm.createFile(atPath: disk.path, contents: nil) else {
-                throw EngineError.operationFailed("Could not create \(disk.path).")
-            }
-            let handle = try FileHandle(forWritingTo: disk)
-            try handle.truncate(atOffset: config.diskBytes)
-            try handle.close()
+        // Root disk. Created once and never recreated: the header decides the
+        // format from then on, so a bundle made before qcow2 was the default
+        // keeps booting exactly as it did.
+        if Self.resolveDisk(in: bundle) == nil {
+            try await Self.createDisk(for: config, in: bundle, tool: tool)
         }
 
         // UEFI variable store: a private, writable copy of the firmware template.
@@ -140,11 +189,18 @@ public final class QEMUEngine: NSObject, VMEngine {
 
         state = .starting
         lastError = nil
+        bundlePath = bundle
 
-        // A stale socket file stops QEMU binding, so clear it before launch.
+        // Stale socket files stop QEMU binding, so clear them before launch.
+        // Both channels are re-created by the new process.
         let monitor = Self.monitorSocketPath(for: config.id)
+        let qmpPath = Self.qmpSocketPath(for: config.id)
         try? FileManager.default.removeItem(atPath: monitor)
+        try? FileManager.default.removeItem(atPath: qmpPath)
         monitorPath = monitor
+        qmp?.disconnect()
+        qmp = nil
+        qmpUnavailableReason = nil
 
         let logURL = bundle.appendingPathComponent(Self.logFileName)
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -193,6 +249,11 @@ public final class QEMUEngine: NSObject, VMEngine {
         if case .installMedia = config.boot {
             answerBootPrompt(in: bundle)
         }
+
+        // Negotiate the structured monitor channel. This is best-effort: a
+        // machine that boots without it is still a machine, and the operations
+        // that need it say so with `qmpUnavailableReason` as the explanation.
+        await establishControlChannel(at: qmpPath)
 
         // Learn about the exit rather than assuming the machine is alive. Without
         // this the engine would report `.running` for a guest that died at boot —
@@ -281,6 +342,8 @@ public final class QEMUEngine: NSObject, VMEngine {
     private func handleTermination(status: Int32, logName: String) {
         process = nil
         monitorPath = nil
+        qmp?.disconnect()
+        qmp = nil
         if state == .stopping || state == .stopped {
             state = .stopped
         } else if status == 0 {
@@ -298,7 +361,20 @@ public final class QEMUEngine: NSObject, VMEngine {
         // An ACPI power-button press, not a kill: `system_powerdown` asks the
         // *guest* to shut down, so Windows flushes its filesystems and closes
         // cleanly instead of losing them to a summary termination.
-        if let monitorPath {
+        //
+        // QMP is preferred now that it exists — it is structured, so a failure
+        // is a typed error rather than silence — and the HMP socket remains the
+        // fallback for a machine whose control channel never came up.
+        var requested = false
+        if let qmp {
+            do {
+                _ = try await qmp.execute("system_powerdown")
+                requested = true
+            } catch {
+                requested = false
+            }
+        }
+        if !requested, let monitorPath {
             Self.sendMonitorCommand("system_powerdown\n", at: monitorPath)
         }
 
@@ -324,12 +400,505 @@ public final class QEMUEngine: NSObject, VMEngine {
         }
         self.process = nil
         monitorPath = nil
+        qmp?.disconnect()
+        qmp = nil
         state = .stopped
+    }
+
+    // MARK: - Machine control (QMP)
+
+    /// Negotiate QMP after launch, retrying while QEMU brings its socket up.
+    ///
+    /// Failure is recorded, never thrown: the guest is booting and a monitor
+    /// channel that is unavailable must not interrupt it. Later operations that
+    /// need the channel report `qmpUnavailableReason` as their explanation.
+    private func establishControlChannel(at path: String) async {
+        let client = QMPClient(path: path)
+        let deadline = Date().addingTimeInterval(Self.qmpConnectBudget)
+        var lastError: (any Error)?
+
+        // Retries are cheap when the socket file does not exist yet (connect
+        // fails immediately with ENOENT) and bounded overall, so a machine that
+        // never opens its monitor costs seconds, not the boot.
+        while Date() < deadline {
+            if process == nil { break }
+            do {
+                try await client.connect()
+                qmp = client
+                qmpUnavailableReason = nil
+                return
+            } catch {
+                lastError = error
+                try? await Task.sleep(nanoseconds: Self.qmpConnectRetryDelay)
+            }
+        }
+
+        client.disconnect()
+        qmp = nil
+        qmpUnavailableReason = lastError?.localizedDescription
+            ?? "QEMU did not open its monitor socket."
+    }
+
+    /// Pause the running guest without ending the process — QMP `stop`.
+    ///
+    /// Not a `VMEngine` requirement yet: the protocol additions (`pause()`,
+    /// snapshots) belong to the registry workstream.
+    public func pauseMachine() async throws {
+        let channel = try controlChannel(for: "Pause")
+        _ = try await command("stop", context: "Could not pause the machine", on: channel)
+        state = .paused
+    }
+
+    /// Resume a paused guest — QMP `cont`.
+    public func resumeMachine() async throws {
+        let channel = try controlChannel(for: "Resume")
+        _ = try await command("cont", context: "Could not resume the machine", on: channel)
+        state = .running
+    }
+
+    /// The snapshots QEMU holds for this machine's disk.
+    ///
+    /// QMP's own `query-snapshots` is tried first; the human monitor's
+    /// `info snapshots` table is the fallback, because not every QEMU build
+    /// answers the former and every build prints the latter.
+    public func listMachineSnapshots() async throws -> [QEMUSnapshot] {
+        try ensureSnapshotsSupported()
+        let channel = try controlChannel(for: "Snapshots")
+
+        if let payload = try? await channel.execute("query-snapshots"),
+           let snapshots = Self.parseSnapshotListQMP(payload) {
+            return snapshots
+        }
+
+        let text = try await Self.humanMonitor("info snapshots", on: channel)
+        return Self.parseSnapshotListHMP(text)
+    }
+
+    /// Take a snapshot of the machine: RAM and disk, under a stable tag.
+    ///
+    /// The guest is paused for the duration. Save-state is written by the same
+    /// device-state serialiser a migration uses, and a running guest would race
+    /// it — so: stop, `savevm`, cont. A machine that was already paused stays
+    /// paused, which is what its owner asked for.
+    ///
+    /// Returns the snapshot as QEMU records it — the caller's display name is
+    /// sanitised into the tag, and the pretty name belongs in the bundle index.
+    @discardableResult
+    public func takeMachineSnapshot(named name: String) async throws -> QEMUSnapshot {
+        try ensureSnapshotsSupported()
+        let channel = try controlChannel(for: "Snapshots")
+        let tag = Self.sanitizeSnapshotName(name)
+
+        let wasRunning = try await machineIsRunning(on: channel)
+        if wasRunning {
+            _ = try await command("stop", context: "Could not pause the machine for a snapshot", on: channel)
+        }
+        do {
+            _ = try await Self.humanMonitor("savevm \(tag)", on: channel)
+        } catch {
+            // Leave the machine as it was found, even though the save failed.
+            if wasRunning { _ = try? await channel.execute("cont") }
+            throw error
+        }
+        if wasRunning {
+            _ = try await command("cont", context: "Could not resume the machine after a snapshot", on: channel)
+        }
+
+        if let fresh = try? await listMachineSnapshots(),
+           let match = fresh.first(where: { $0.id == tag }) {
+            return match
+        }
+        // A snapshot that saved without error is real even when the listing
+        // has not caught up (some builds lag one poll behind).
+        return QEMUSnapshot(id: tag, name: tag, createdAt: Date(), includesMemory: true)
+    }
+
+    /// Restore the machine to a snapshot's RAM and disk state.
+    ///
+    /// `loadvm` replaces device state as well as memory, so the machine is
+    /// paused around it and left in the state the caller found it in: running
+    /// stays running, paused stays paused. The end state `loadvm` leaves behind
+    /// is build-dependent, so it is corrected explicitly rather than trusted.
+    public func restoreMachineSnapshot(id: String) async throws {
+        try ensureSnapshotsSupported()
+        let channel = try controlChannel(for: "Restore")
+        let tag = Self.sanitizeSnapshotName(id)
+
+        let wasRunning = try await machineIsRunning(on: channel)
+        if wasRunning {
+            _ = try await command("stop", context: "Could not pause the machine for a restore", on: channel)
+        }
+        do {
+            _ = try await Self.humanMonitor("loadvm \(tag)", on: channel)
+        } catch {
+            if wasRunning { _ = try? await channel.execute("cont") }
+            throw error
+        }
+
+        let runningNow = try await machineIsRunning(on: channel)
+        if wasRunning && !runningNow {
+            _ = try await command("cont", context: "Could not resume the machine after a restore", on: channel)
+        } else if !wasRunning && runningNow {
+            _ = try await command("stop", context: "Could not pause the machine after a restore", on: channel)
+        }
+        state = wasRunning ? .running : .paused
+    }
+
+    /// Delete a snapshot. Safe while the guest runs: `delvm` only touches the
+    /// image, and QEMU refuses if the snapshot is the machine's current state.
+    public func deleteMachineSnapshot(id: String) async throws {
+        try ensureSnapshotsSupported()
+        let channel = try controlChannel(for: "Delete snapshot")
+        let tag = Self.sanitizeSnapshotName(id)
+        _ = try await Self.humanMonitor("delvm \(tag)", on: channel)
+    }
+
+    /// The QMP channel, or a clear error saying why there is none.
+    ///
+    /// This is the "unavailable" report the plan asks for: a machine whose
+    /// control channel never came up keeps booting, and the operations that
+    /// needed it explain themselves instead of failing with a socket errno.
+    private func controlChannel(for operation: String) throws -> QMPClient {
+        guard let qmp else {
+            let reason = qmpUnavailableReason ?? "the machine is not running"
+            // A dedicated `unsupportedFeature` case lands with the engine
+            // protocol work; until then this is the honest wording.
+            throw EngineError.operationFailed(
+                "\(operation) needs QEMU's control channel (QMP), which is not "
+                    + "available here: \(reason)"
+            )
+        }
+        return qmp
+    }
+
+    /// Run one QMP command, mapping failures into the engine's error type.
+    private func command(
+        _ name: String,
+        context: String,
+        on channel: QMPClient
+    ) async throws -> QMPValue {
+        do {
+            return try await channel.execute(name)
+        } catch {
+            throw Self.engineError(from: error, operation: context)
+        }
+    }
+
+    /// Whether the guest is executing, per QEMU's own bookkeeping.
+    private func machineIsRunning(on channel: QMPClient) async throws -> Bool {
+        let status = try await command(
+            "query-status",
+            context: "Could not read the machine's state",
+            on: channel
+        )
+        if let running = status["running"]?.boolValue { return running }
+        return status["status"]?.stringValue == "running"
+    }
+
+    /// Send one human-monitor command over QMP and return its text output.
+    nonisolated private static func humanMonitor(
+        _ command: String,
+        on channel: QMPClient
+    ) async throws -> String {
+        do {
+            let value = try await channel.execute(
+                "human-monitor-command",
+                arguments: ["command-line": .string(command)]
+            )
+            return value.stringValue ?? ""
+        } catch {
+            throw engineError(from: error, operation: "QEMU rejected “\(command)”")
+        }
+    }
+
+    /// Word a QMP failure the way a user can act on it.
+    nonisolated static func engineError(from error: any Error, operation: String) -> EngineError {
+        if let engineError = error as? EngineError { return engineError }
+        if let qmpError = error as? QMPError {
+            if case .commandFailed(_, _, let description) = qmpError, !description.isEmpty {
+                return .operationFailed("\(operation): \(description)")
+            }
+            return .operationFailed("\(operation): \(qmpError.localizedDescription)")
+        }
+        return .operationFailed("\(operation): \(error.localizedDescription)")
+    }
+
+    // MARK: - Snapshot support
+
+    /// Fail early — and actionably — when a snapshot command cannot work.
+    ///
+    /// The disk is checked before the control channel on purpose. A raw disk is
+    /// the common case for machines made before qcow2 was the default, and
+    /// "convert it first" is a different, more useful message than "no socket".
+    private func ensureSnapshotsSupported() throws {
+        guard let bundlePath else {
+            throw EngineError.operationFailed(
+                "Snapshots need this machine's bundle, and the engine has not "
+                    + "been pointed at one yet."
+            )
+        }
+        guard let disk = Self.resolveDisk(in: bundlePath) else {
+            throw EngineError.operationFailed("No disk image found in \(bundlePath.path).")
+        }
+        guard disk.format == .qcow2 else {
+            throw Self.snapshotUnsupportedError(diskPath: disk.url.path)
+        }
+    }
+
+    /// The error a snapshot attempt on a raw disk produces.
+    ///
+    /// It names the exact fix: raw images have nowhere to store a snapshot, and
+    /// converting to qcow2 is a one-command migration with nothing lost.
+    nonisolated static func snapshotUnsupportedError(diskPath: String) -> EngineError {
+        .operationFailed(
+            "This machine's disk is a raw image, which cannot hold snapshots. "
+                + "Convert it first with `macportctl disk convert` "
+                + "(a qcow2 disk keeps the same contents; a raw one cannot store a snapshot). "
+                + "Disk: \(diskPath)"
+        )
+    }
+
+    /// The machine's root disk, if one exists.
+    ///
+    /// Probed by existence, and its *format* is read from the file header —
+    /// never guessed from the name, because the name is only a convention and a
+    /// wrong guess would hand QEMU the wrong driver.
+    nonisolated static func resolveDisk(in bundle: URL) -> DiskImage? {
+        let fileManager = FileManager.default
+        let qcow = bundle.appendingPathComponent(qcowDiskFileName)
+        let raw = bundle.appendingPathComponent(diskFileName)
+        let candidate: URL
+        if fileManager.fileExists(atPath: qcow.path) {
+            candidate = qcow
+        } else if fileManager.fileExists(atPath: raw.path) {
+            candidate = raw
+        } else {
+            return nil
+        }
+        return DiskImage(url: candidate, format: diskFormat(at: candidate) ?? .raw)
+    }
+
+    /// Read a disk image's format from its first four bytes.
+    ///
+    /// A qcow2 file starts with the magic `QFI\xfb`; everything else is treated
+    /// as raw. Returns `nil` only when the file cannot be read at all.
+    nonisolated static func diskFormat(at url: URL) -> DiskFormat? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 4), header.count == 4 else { return nil }
+        return header == Data([0x51, 0x46, 0x49, 0xFB]) ? .qcow2 : .raw
+    }
+
+    /// Create the root disk, preferring qcow2 so the machine can be snapshotted
+    /// from its first boot.
+    ///
+    /// Falls back to a sparse raw file when `qemu-img` is missing: a runtime
+    /// without the image tool is unusual, but a machine that boots is worth
+    /// more than one that could be snapshotted. Both are sparse — a declared
+    /// 80 GB ceiling costs nothing until the guest writes.
+    nonisolated private static func createDisk(
+        for config: VMConfiguration,
+        in bundle: URL,
+        tool: QEMURuntime.Tool
+    ) async throws {
+        if let qemuImg = tool.imageBinary {
+            let disk = bundle.appendingPathComponent(qcowDiskFileName)
+            let result = await runOffMainThread {
+                runBlocking(qemuImg, ["create", "-f", "qcow2", disk.path, String(config.diskBytes)])
+            }
+            if result.status == 0 { return }
+        }
+
+        let disk = bundle.appendingPathComponent(diskFileName)
+        guard FileManager.default.createFile(atPath: disk.path, contents: nil) else {
+            throw EngineError.operationFailed("Could not create \(disk.path).")
+        }
+        let handle = try FileHandle(forWritingTo: disk)
+        try handle.truncate(atOffset: config.diskBytes)
+        try handle.close()
+    }
+
+    /// Run a purely synchronous helper off the main actor.
+    nonisolated private static func runOffMainThread<T: Sendable>(
+        _ work: @escaping @Sendable () -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: work())
+            }
+        }
+    }
+
+    /// Run a child process and capture its output. Blocking; call off-main.
+    nonisolated private static func runBlocking(
+        _ executable: URL,
+        _ arguments: [String]
+    ) -> (status: Int32, output: String) {
+        let task = Process()
+        task.executableURL = executable
+        task.arguments = arguments
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        do {
+            try task.run()
+        } catch {
+            return (-1, error.localizedDescription)
+        }
+        // Drain before waiting: a full pipe buffer would deadlock the child.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return (task.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+
+    /// Reduce a display name to a QEMU-safe snapshot tag.
+    ///
+    /// QEMU tags travel through a human-monitor command line, so a tag cannot
+    /// contain whitespace or shell-ish punctuation. Everything outside
+    /// `[A-Za-z0-9._-]` becomes `-`, the result is capped at 64 characters and
+    /// never empty, and the mapping is deterministic — `restore(id:)` uses the
+    /// same rule, so a tag round-trips exactly.
+    nonisolated static func sanitizeSnapshotName(_ raw: String) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        var mapped = String(raw.map { allowed.contains($0) ? $0 : "-" })
+        if mapped.count > 64 { mapped = String(mapped.prefix(64)) }
+        // A name made entirely of separators would be an empty tag.
+        let meaningful = mapped.trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+        return meaningful.isEmpty ? "snapshot" : mapped
+    }
+
+    /// Parse QMP `query-snapshots` output where a build answers it.
+    ///
+    /// The command is not present in every QEMU, and its payload has varied,
+    /// so this is deliberately forgiving: it extracts the fields that identify
+    /// a snapshot — tag and time — from whichever spellings a build uses, and
+    /// returns `nil` for a shape it does not recognise so the caller falls back
+    /// to the human monitor's table.
+    nonisolated static func parseSnapshotListQMP(_ payload: QMPValue) -> [QEMUSnapshot]? {
+        let entries: [QMPValue]
+        if let array = payload.arrayValue {
+            entries = array
+        } else if let nested = payload["snapshots"]?.arrayValue {
+            entries = nested
+        } else {
+            return nil
+        }
+
+        var snapshots: [QEMUSnapshot] = []
+        for entry in entries {
+            guard let object = entry.objectValue else { return nil }
+            let tag = (object["name"] ?? object["tag"] ?? object["id"])?.stringValue
+                ?? object["id"]?.intValue.map(String.init)
+            guard let tag, !tag.isEmpty else { return nil }
+
+            var created = Date()
+            if let seconds = (object["date-sec"] ?? object["date"])?.intValue {
+                let nanoseconds = object["date-nsec"]?.intValue ?? 0
+                created = Date(timeIntervalSince1970: TimeInterval(seconds) + TimeInterval(nanoseconds) / 1_000_000_000)
+            }
+            let stateBytes = (object["vm-state-size"] ?? object["vm-state-size-bytes"])?.intValue ?? 0
+            snapshots.append(
+                QEMUSnapshot(
+                    id: tag,
+                    name: tag,
+                    createdAt: created,
+                    includesMemory: stateBytes > 0
+                )
+            )
+        }
+        return snapshots
+    }
+
+    /// Parse the human monitor's `info snapshots` table.
+    ///
+    /// The header is
+    ///
+    ///     ID        TAG                     VM SIZE                DATE       VM CLOCK
+    ///
+    /// and QEMU prints `There is no snapshot available.` when the disk has none.
+    /// Column widths differ between versions, so a snapshot row is recognised
+    /// by the date column — the one field with an unambiguous shape — and the
+    /// tag is whatever sits between the id and the size.
+    nonisolated static func parseSnapshotListHMP(_ text: String) -> [QEMUSnapshot] {
+        let emptyMarkers = [
+            "There is no snapshot available",
+            "There are no snapshots",
+            "There is no snapshot on",
+        ]
+
+        var snapshots: [QEMUSnapshot] = []
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if emptyMarkers.contains(where: { line.hasPrefix($0) }) { continue }
+            if line.hasPrefix("ID") && line.contains("TAG") { continue }
+            if line.hasPrefix("List of snapshots") { continue }
+            if line.hasPrefix("Snapshot list") { continue }
+
+            guard let match = snapshotRow(line) else { continue }
+            snapshots.append(match)
+        }
+        return snapshots
+    }
+
+    /// One `info snapshots` row, or `nil` for a line that is not one.
+    private nonisolated static func snapshotRow(_ line: String) -> QEMUSnapshot? {
+        // Anchored on the date, which is the only column with a fixed shape.
+        // ID is a number or `--`; TAG may contain spaces; SIZE is a byte count
+        // or `--`/`unavailable`; then date, then clock.
+        let pattern = #"^(--|\d+)\s+(.+?)\s+(\d+(?:\.\d+)?\s*[KMGTP]?i?B|--|unavailable)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?|--)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, range: range),
+              match.numberOfRanges == 6 else { return nil }
+
+        func group(_ index: Int) -> String? {
+            guard let groupRange = Range(match.range(at: index), in: line) else { return nil }
+            return String(line[groupRange])
+        }
+
+        guard let tag = group(2)?.trimmingCharacters(in: .whitespaces), !tag.isEmpty else {
+            return nil
+        }
+        let size = group(3).flatMap(byteCount(from:)) ?? 0
+        let created = group(4).flatMap(snapshotDate(from:)) ?? Date()
+        return QEMUSnapshot(id: tag, name: tag, createdAt: created, includesMemory: size > 0)
+    }
+
+    /// Convert `info snapshots`' human size ("131 MB") into bytes.
+    private nonisolated static func byteCount(from text: String) -> UInt64? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed == "--" || trimmed == "unavailable" { return nil }
+        let upper = trimmed.uppercased()
+        let multipliers: [(String, UInt64)] = [
+            ("TIB", 1 << 40), ("GIB", 1 << 30), ("MIB", 1 << 20), ("KIB", 1 << 10),
+            ("TB", 1 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10),
+            ("B", 1),
+        ]
+        for (suffix, multiplier) in multipliers where upper.hasSuffix(suffix) {
+            let number = upper.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)
+            guard let value = Double(number) else { return nil }
+            return UInt64(value * Double(multiplier))
+        }
+        return UInt64(upper)
+    }
+
+    /// Parse the `info snapshots` date (local time, as QEMU prints it).
+    private nonisolated static func snapshotDate(from text: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.date(from: text)
     }
 
     // MARK: - Command line
 
     nonisolated private static let diskFileName = "disk.img"
+    /// The snapshot-capable root disk new machines get, when `qemu-img` can
+    /// create one. Old bundles keep `disk.img`; the header, not the name,
+    /// decides how either is opened.
+    nonisolated private static let qcowDiskFileName = "disk.qcow2"
     nonisolated private static let varsFileName = "efi-vars.fd"
     nonisolated private static let logFileName = "qemu.log"
     nonisolated private static let consoleFileName = "console.log"
@@ -341,23 +910,46 @@ public final class QEMUEngine: NSObject, VMEngine {
     /// its first boot attempt — one minute's worth.
     nonisolated private static let bootAttemptPolls = 240
 
+    /// How long QMP negotiation may take before the control channel is called
+    /// unavailable. Generous, because the price of being late is one line in the
+    /// logs and the price of being impatient is a working machine with no pause.
+    nonisolated private static let qmpConnectBudget: TimeInterval = 8
+    nonisolated private static let qmpConnectRetryDelay: UInt64 = 300_000_000
+
     /// The kernel's `sun_path` caps a unix socket path at 104 bytes, and a VM
     /// bundle under Application Support passes that the moment the user's account
     /// name is more than a few characters — QEMU then refuses to start with
     /// "UNIX socket path is too long" and nothing else.
     ///
-    /// So the monitor socket lives outside the bundle, in a short, per-user
+    /// So the monitor sockets live outside the bundle, in a short, per-user
     /// location keyed by the machine's identifier. The bundle keeps the log and the
     /// console, which are ordinary files and have no such limit.
+    nonisolated private static let sunPathCapacity = 104
+
     nonisolated private static func monitorSocketPath(for id: UUID) -> String {
-        let name = "macport-\(id.uuidString.prefix(8)).monitor"
+        socketPath(named: "macport-\(id.uuidString.prefix(8)).monitor")
+    }
+
+    /// The QMP socket, one per machine, beside the human monitor.
+    ///
+    /// `.qmp` is appended when the monitor path leaves room; when it does not,
+    /// a shorter name in the same directory is used rather than a truncated
+    /// path, because a truncated path means QEMU silently binds nothing.
+    nonisolated private static func qmpSocketPath(for id: UUID) -> String {
+        let derived = monitorSocketPath(for: id) + ".qmp"
+        if derived.utf8.count < sunPathCapacity { return derived }
+        return socketPath(named: "macport-\(id.uuidString.prefix(8)).qmp")
+    }
+
+    /// A socket path in the first per-user location that fits the kernel's limit.
+    nonisolated private static func socketPath(named name: String) -> String {
         let candidates = [
             FileManager.default.temporaryDirectory,
             URL(fileURLWithPath: "/tmp", isDirectory: true),
         ]
         for directory in candidates {
             let path = directory.appendingPathComponent(name).path
-            if path.utf8.count < 104 { return path }
+            if path.utf8.count < sunPathCapacity { return path }
         }
         // Unreachable in practice, but a path that compiles is better than a
         // silently truncated one.
@@ -456,10 +1048,17 @@ public final class QEMUEngine: NSObject, VMEngine {
         // Root disk as NVMe. Windows carries `stornvme` in the box as a
         // boot-critical driver, so Setup sees the target disk immediately instead
         // of stopping at "no drives found" — the failure that virtio-blk produces.
+        //
+        // The format is read from the file header rather than assumed: new
+        // machines get qcow2 so they can be snapshotted, bundles from before
+        // that carry a raw sparse image, and both boot identically.
+        let disk = resolveDisk(in: bundle)
+        let diskPath = disk?.url.path ?? bundle.appendingPathComponent(diskFileName).path
+        let diskFormat = disk?.format.rawValue ?? DiskFormat.raw.rawValue
         args += ["-device", "nvme,serial=macport,drive=rootdisk"]
         args += [
             "-drive",
-            "if=none,id=rootdisk,format=raw,file=\(bundle.appendingPathComponent(diskFileName).path)",
+            "if=none,id=rootdisk,format=\(diskFormat),file=\(diskPath)",
         ]
 
         // Installer media as a **real SCSI CD-ROM carried over USB**.
@@ -527,11 +1126,19 @@ public final class QEMUEngine: NSObject, VMEngine {
         }
 
         // A human-monitor socket, outside the VM bundle because a unix socket path
-        // is length-capped. It is how `stop()` presses the guest's power button, and
-        // it makes the machine inspectable from outside while it runs.
+        // is length-capped. It is how `stop()` presses the guest's power button
+        // when QMP is unavailable, and how the boot prompt is answered with
+        // `sendkey` — the one job the text monitor still owns.
         args += [
             "-monitor",
             "unix:\(monitorSocketPath(for: config.id)),server=on,wait=off",
+        ]
+        // The structured control channel: pause/resume, snapshots, and an
+        // answerable powerdown. `wait=off` means a missing client never delays
+        // the boot — the machine is not held hostage by its monitor.
+        args += [
+            "-qmp",
+            "unix:\(qmpSocketPath(for: config.id)),server=on,wait=off",
         ]
         // Firmware and kernel console output, appended to a file in the bundle.
         // When a guest will not boot, this is the first place to look, and having
@@ -564,8 +1171,11 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     /// Send one command to QEMU's human monitor over its unix socket.
     ///
-    /// The monitor is a plain-text protocol, which is far less code than a full
-    /// QMP client for the one thing needed here: asking the guest to power down.
+    /// The text monitor is now the narrow path, not the main one: QMP owns
+    /// pause/resume, snapshots and the structured powerdown, while the HMP
+    /// socket answers the boot prompt with `sendkey` — a command QMP has no
+    /// equivalent for — and stands in as the powerdown fallback when QMP never
+    /// connected.
     nonisolated private static func sendMonitorCommand(_ command: String, at path: String) {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return }
