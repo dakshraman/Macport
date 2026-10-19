@@ -52,6 +52,21 @@ public struct EngineCapabilities: Codable, Hashable, Sendable {
     /// Can the engine emulate a *foreign* CPU architecture (e.g. x86_64 on an
     /// arm64 host)? Emulation is 10-100x slower; only QEMU-class engines can.
     public var foreignArchitectureEmulation: Bool
+    /// Can the engine suspend a running guest and continue it later?
+    ///
+    /// Pause is not "save state": the guest remains in host memory and dies with
+    /// the process. Engines that can write RAM to disk declare `saveState` too.
+    public var pauseResume: Bool
+    /// Can the engine persist guest RAM and resume from it in a later process?
+    public var saveState: Bool
+    /// Can the engine keep a guest running when the app quits?
+    ///
+    /// Virtualization.framework is bound to the process that created its display
+    /// object, so it reports `false`. QEMU runs in its own host process and
+    /// reports `true`.
+    public var backgroundHosting: Bool
+    /// Can the engine convert and attach an existing disk image?
+    public var diskImport: Bool
 
     public init(
         tpm: Bool = false,
@@ -61,7 +76,11 @@ public struct EngineCapabilities: Codable, Hashable, Sendable {
         snapshots: Bool = false,
         sharedFolders: Bool = false,
         usbPassthrough: Bool = false,
-        foreignArchitectureEmulation: Bool = false
+        foreignArchitectureEmulation: Bool = false,
+        pauseResume: Bool = false,
+        saveState: Bool = false,
+        backgroundHosting: Bool = false,
+        diskImport: Bool = false
     ) {
         self.tpm = tpm
         self.opticalMedia = opticalMedia
@@ -71,6 +90,36 @@ public struct EngineCapabilities: Codable, Hashable, Sendable {
         self.sharedFolders = sharedFolders
         self.usbPassthrough = usbPassthrough
         self.foreignArchitectureEmulation = foreignArchitectureEmulation
+        self.pauseResume = pauseResume
+        self.saveState = saveState
+        self.backgroundHosting = backgroundHosting
+        self.diskImport = diskImport
+    }
+}
+
+// MARK: - Snapshots
+
+/// One engine-level snapshot of a virtual machine.
+///
+/// `id` is the engine's own tag, not a Macport-generated UUID: the engine is the
+/// source of truth for whether a snapshot exists, and restoring must use the
+/// identifier the engine understands. `name` is the user-facing label.
+public struct VMSnapshot: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var createdAt: Date
+    public var includesMemory: Bool
+
+    public init(
+        id: String,
+        name: String,
+        createdAt: Date = Date(),
+        includesMemory: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+        self.includesMemory = includesMemory
     }
 }
 
@@ -107,6 +156,13 @@ public enum EngineError: Error, LocalizedError, Sendable {
     case hostResourceUnavailable(String)
     case operationFailed(String)
     case installMediaMissing(String)
+    /// The engine is working, but it has no implementation for this operation.
+    ///
+    /// Carries the feature name rather than a fixed message so callers can say
+    /// *which* request the engine cannot honour. A `capabilities` flag returning
+    /// `false` is the UI's warning; this error is what a caller that tried anyway
+    /// gets, and it must be specific enough to name the next step.
+    case unsupportedFeature(String)
 
     public var errorDescription: String? {
         switch self {
@@ -124,6 +180,9 @@ public enum EngineError: Error, LocalizedError, Sendable {
             return "Operation failed: \(detail)"
         case .installMediaMissing(let path):
             return "Install media not found at \(path)."
+        case .unsupportedFeature(let feature):
+            return "This engine does not support \(feature). Pick an engine whose "
+                + "capabilities report it, or update Macport for a newer release."
         }
     }
 }
@@ -180,8 +239,62 @@ public protocol VMEngine: AnyObject, Sendable {
 
     /// Force power-off without a guest shutdown handshake.
     func forceStop() async throws
+
+    // MARK: - Engine protocol v2
+
+    /// Suspend the guest, keeping it in memory. Resume with `resume()`.
+    ///
+    /// Engines whose capabilities report `pauseResume == false` inherit the
+    /// default implementation below, which throws `.unsupportedFeature`.
+    func pause() async throws
+
+    /// Continue a paused guest.
+    func resume() async throws
+
+    /// Every snapshot the engine currently holds, newest first.
+    func listSnapshots() async throws -> [VMSnapshot]
+
+    /// Capture the machine's current state under a human-readable name.
+    func takeSnapshot(named name: String) async throws -> VMSnapshot
+
+    /// Roll the machine back to `id`. Restoring is destructive to everything
+    /// written since the snapshot was taken, and the caller owns saying so.
+    func restoreSnapshot(id: String) async throws
+
+    /// Remove a snapshot. Deleting the only rollback point is irreversible.
+    func deleteSnapshot(id: String) async throws
 }
 
 extension VMEngine {
     nonisolated public static func availability() -> Result<Void, EngineError> { .success(()) }
+
+    // Default implementations of the v2 additions. They exist so an engine that
+    // does not implement a feature keeps compiling — and fails *loudly and
+    // specifically* if something calls it anyway, rather than silently doing
+    // nothing. Capabilities remain the authoritative answer the UI reads; these
+    // are the runtime backstop for a caller that did not ask first.
+
+    public func pause() async throws {
+        throw EngineError.unsupportedFeature("pause and resume")
+    }
+
+    public func resume() async throws {
+        throw EngineError.unsupportedFeature("pause and resume")
+    }
+
+    public func listSnapshots() async throws -> [VMSnapshot] {
+        throw EngineError.unsupportedFeature("snapshots")
+    }
+
+    public func takeSnapshot(named name: String) async throws -> VMSnapshot {
+        throw EngineError.unsupportedFeature("snapshots")
+    }
+
+    public func restoreSnapshot(id: String) async throws {
+        throw EngineError.unsupportedFeature("snapshots")
+    }
+
+    public func deleteSnapshot(id: String) async throws {
+        throw EngineError.unsupportedFeature("snapshots")
+    }
 }

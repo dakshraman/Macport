@@ -10,7 +10,9 @@ struct VMDetailView: View {
 
     let config: VMConfiguration
 
-    private var isRunning: Bool { state.runningVMID == config.id }
+    private var isRunning: Bool { state.isRunning(config.id) }
+
+    private var vmState: VMState { state.state(for: config.id) }
 
     /// The engine that owns this VM. Resolved through the registry, so the pane
     /// describes the engine that will *actually* run the machine rather than a
@@ -28,17 +30,28 @@ struct VMDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if isRunning {
+                    if capabilities.pauseResume {
+                        if vmState == .paused {
+                            Button("Resume") {
+                                Task { await state.resume(id: config.id) }
+                            }
+                        } else {
+                            Button("Pause") {
+                                Task { await state.pause(id: config.id) }
+                            }
+                            .disabled(vmState != .running)
+                        }
+                    }
                     Button("Stop") {
-                        Task { await state.stop(graceful: true) }
+                        Task { await state.stop(id: config.id, graceful: true) }
                     }
                     Button("Force Off") {
-                        Task { await state.stop(graceful: false) }
+                        Task { await state.stop(id: config.id, graceful: false) }
                     }
                 } else {
                     Button("Start") {
                         state.start(config, in: store)
                     }
-                    .disabled(state.isBusy)
                 }
             }
         }
@@ -48,10 +61,10 @@ struct VMDetailView: View {
 
     @ViewBuilder
     private var content: some View {
-        if isRunning, let machine = state.liveMachine {
+        if isRunning, let machine = state.liveMachine(for: config.id) {
             VMDisplayView(machine: machine)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if isRunning, state.runsInExternalWindow {
+        } else if isRunning, state.runsInExternalWindow(for: config.id) {
             externalWindowPanel
         } else {
             ScrollView {
@@ -77,7 +90,7 @@ struct VMDetailView: View {
                 .font(.system(size: 44))
                 .foregroundStyle(.tint)
 
-            Text("\(state.runningEngineName ?? engineType.displayName) is displaying this machine in its own window")
+            Text("\(state.engineName(for: config.id) ?? engineType.displayName) is displaying this machine in its own window")
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
@@ -116,18 +129,39 @@ struct VMDetailView: View {
 
             Spacer()
 
-            Text(isRunning ? "Running" : "Stopped")
+            Text(statusText)
                 .font(.callout.weight(.medium))
-                .foregroundStyle(isRunning ? .green : .secondary)
+                .foregroundStyle(statusColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(
-                    Capsule().fill(
-                        isRunning ? Color.green.opacity(0.12) : Color.secondary.opacity(0.12)
-                    )
+                    Capsule().fill(statusColor.opacity(0.12))
                 )
         }
         .padding(20)
+    }
+
+    /// A label for the VM's actual power state, not just on/off — a paused
+    /// machine that still says "Running" is how a user concludes the Resume
+    /// button is broken.
+    private var statusText: String {
+        switch vmState {
+        case .stopped: return "Stopped"
+        case .starting: return "Starting"
+        case .running: return "Running"
+        case .pausing, .paused: return "Paused"
+        case .stopping: return "Stopping"
+        case .error: return "Error"
+        }
+    }
+
+    private var statusColor: Color {
+        switch vmState {
+        case .running: return .green
+        case .paused, .pausing, .starting, .stopping: return .orange
+        case .error: return .red
+        case .stopped: return .secondary
+        }
     }
 
     // MARK: - Sections

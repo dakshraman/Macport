@@ -1,0 +1,69 @@
+import Combine
+import Foundation
+
+/// One virtual machine that the runtime is holding, and everything the UI needs
+/// to describe it without reaching back into the engine.
+///
+/// Deliberately a *snapshot of live state*, not another engine wrapper: the
+/// registry polls the engine and writes the results here, so `VMInstance` is the
+/// only object the UI observes for "is this VM up?". Two sources of truth for
+/// that question is one too many, and the one that drifts is always the cache.
+@MainActor
+public final class VMInstance: ObservableObject, Identifiable {
+    /// The VM's identifier. Equal to `config.id`, so the registry's dictionary
+    /// and a persisted configuration cannot disagree about which machine is which.
+    public let id: UUID
+    public let config: VMConfiguration
+    public let engine: any VMEngine
+    public let engineName: String
+
+    /// Engine state as of the last refresh.
+    @Published public private(set) var state: VMState
+
+    /// Why the machine last stopped abnormally, as of the last refresh.
+    @Published public private(set) var lastError: String?
+
+    /// When the registry handed this instance its engine.
+    @Published public private(set) var startedAt: Date?
+
+    /// Is the guest drawing itself into a window Macport does not own?
+    ///
+    /// True for QEMU, which opens its own Cocoa window. Surfaced per instance
+    /// because with several VMs running, "the guest is somewhere else" is a fact
+    /// about *this* machine, not about the app.
+    @Published public private(set) var runsInExternalWindow: Bool
+
+    public init(
+        config: VMConfiguration,
+        engine: any VMEngine,
+        engineName: String? = nil,
+        startedAt: Date? = Date()
+    ) {
+        self.id = config.id
+        self.config = config
+        self.engine = engine
+        self.engineName = engineName ?? type(of: engine).displayName
+        self.state = engine.state
+        self.lastError = engine.lastError
+        self.startedAt = startedAt
+        self.runsInExternalWindow = engine is QEMUEngine
+    }
+
+    /// Copy the engine's live state into this instance.
+    ///
+    /// Returns whether anything actually changed, so the registry can avoid
+    /// waking SwiftUI four times a second for a machine that is sitting still.
+    @discardableResult
+    func update(state: VMState, lastError: String?) -> Bool {
+        var changed = false
+        if self.state != state {
+            self.state = state
+            changed = true
+        }
+        if self.lastError != lastError {
+            self.lastError = lastError
+            changed = true
+        }
+        return changed
+    }
+}

@@ -36,7 +36,15 @@ public final class QEMUEngine: NSObject, VMEngine {
             snapshots: false,
             sharedFolders: false,
             usbPassthrough: false,
-            foreignArchitectureEmulation: false
+            foreignArchitectureEmulation: false,
+            // QEMU and QMP can do all of these; Macport wires each one up in
+            // workstream B (pause/resume/snapshots) and C (per-VM host process).
+            // Reported false until the code actually does it — a capability is a
+            // promise, not a possibility.
+            pauseResume: false,
+            saveState: false,
+            backgroundHosting: true,
+            diskImport: true
         )
     }
 

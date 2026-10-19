@@ -1,25 +1,19 @@
+import Combine
 import Foundation
 import Virtualization
 import MacportKit
 
-/// Owns the currently running machine and brokers engine selection.
+/// The app's view of what is running, and the one seam between SwiftUI and the
+/// runtime.
 ///
-/// One running VM at a time is a deliberate v1 constraint. It keeps resource
-/// accounting honest — the host does not silently oversubscribe itself because
-/// the user started four machines — and it matches how most people use a
-/// desktop hypervisor. Lifting it later means turning `engine` into a
-/// dictionary keyed by VM id.
+/// `AppState` deliberately no longer owns an engine or the "currently running VM"
+/// id. It keeps its name — the UI talks to it everywhere — but it is now a facade
+/// over `VMRuntimeRegistry`, which owns every running machine. Two VMs up at once
+/// is therefore an ordinary case here, not a special one, and admission control
+/// (in the registry) decides whether a start is honest before it happens.
 @MainActor
 final class AppState: ObservableObject {
     @Published var isPresentingCreateSheet = false
-
-    /// The VM currently powered on, if any.
-    @Published private(set) var runningVMID: UUID?
-
-    /// Which engine is running it. Worth surfacing: the same guest on a different
-    /// engine is a different machine, and users debug far faster when the UI says
-    /// which hypervisor they are actually on.
-    @Published private(set) var runningEngineName: String?
 
     /// Surfaced to the user. Cleared by `dismissError()`.
     @Published var errorMessage: String?
@@ -35,9 +29,31 @@ final class AppState: ObservableObject {
     @Published private(set) var runtimeInstallProgress: String?
     @Published private(set) var isInstallingRuntime = false
 
-    private(set) var engine: (any VMEngine)?
+    /// The runtime that actually holds running machines.
+    ///
+    /// Exposed rather than hidden so a view can observe the registry directly if
+    /// it ever needs per-instance detail this facade does not forward.
+    let registry: VMRuntimeRegistry
 
-    var isBusy: Bool { runningVMID != nil }
+    /// Republished so SwiftUI re-renders when a VM appears, changes state or is
+    /// stopped. The registry's own notifications drive this; there is no copy of
+    /// the state to fall out of sync.
+    var instances: [UUID: VMInstance] { registry.instances }
+
+    private var registryObservation: AnyCancellable?
+
+    init(registry: VMRuntimeRegistry = VMRuntimeRegistry()) {
+        self.registry = registry
+        // The registry announces state changes on the main actor; AppState
+        // mirrors them so every view observing AppState stays live without
+        // knowing the registry exists.
+        registryObservation = registry.objectWillChange
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.objectWillChange.send()
+                }
+            }
+    }
 
     // MARK: - Engine selection
 
@@ -91,8 +107,9 @@ final class AppState: ObservableObject {
         return warnings
     }
 
-    // MARK: - Lifecycle
+    // MARK: - Creation
 
+    /// Persist the configuration and prepare its bundle. Does not start it.
     func create(_ config: VMConfiguration, in store: VMStore) {
         do {
             let saved = try store.save(config)
@@ -112,66 +129,76 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Lifecycle
+
+    /// Start a VM. Fire-and-forget: the registry owns the state and surfaces
+    /// failures through `errorMessage`.
     func start(_ config: VMConfiguration, in store: VMStore) {
-        guard !isBusy else {
-            errorMessage = "Stop the running virtual machine first. Macport runs one at a time."
-            return
-        }
-
-        let engineType = hostingEngine(for: config)
-        if case .failure(let error) = engineType.availability() {
-            errorMessage = error.localizedDescription
-            return
-        }
-
-        let engine = EngineRegistry.makeEngine(for: config)
-        self.engine = engine
-        self.runningEngineName = engineType.displayName
-        let bundle = store.bundleURL(for: config)
-
         Task {
             do {
-                try await engine.start(config, in: bundle)
-                await MainActor.run { self.runningVMID = config.id }
+                try await registry.start(config, in: store)
             } catch {
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.runningVMID = nil
-                    self.runningEngineName = nil
-                    self.engine = nil
-                }
+                errorMessage = error.localizedDescription
             }
         }
     }
 
-    func stop(graceful: Bool = true) async {
-        guard let engine else { return }
+    /// Stop one VM. Errors are surfaced, and the machine stays listed if the
+    /// engine refused to stop it.
+    func stop(id: UUID, graceful: Bool = true) async {
         do {
-            if graceful {
-                try await engine.stop()
-            } else {
-                try await engine.forceStop()
-            }
+            try await registry.stop(id, graceful: graceful)
         } catch {
             errorMessage = error.localizedDescription
         }
-        runningVMID = nil
-        runningEngineName = nil
-        self.engine = nil
     }
 
-    // MARK: - Display
+    func pause(id: UUID) async {
+        do {
+            try await registry.pause(id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 
-    /// The live machine for the in-app framebuffer, when the running engine has
-    /// one the app can embed.
+    func resume(id: UUID) async {
+        do {
+            try await registry.resume(id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Per-VM queries
+
+    func instance(for id: UUID) -> VMInstance? { registry.instance(id) }
+
+    func state(for id: UUID) -> VMState { registry.state(of: id) }
+
+    /// Is this VM up (running, paused or in a transition)? Drives the sidebar dot
+    /// and the detail pane's power controls.
+    func isRunning(_ id: UUID) -> Bool { state(for: id).isActive }
+
+    /// The live machine for the in-app framebuffer, when this VM's engine has one
+    /// the app can embed.
     ///
     /// Only Virtualization.framework exposes a machine object bindable to a view.
     /// QEMU renders to its own window, so this is nil there — deliberately nil
     /// rather than a blank pane that looks like a failure.
-    var liveMachine: VZVirtualMachine? { (engine as? VZEngine)?.virtualMachine }
+    func liveMachine(for id: UUID) -> VZVirtualMachine? {
+        (registry.instance(id)?.engine as? VZEngine)?.virtualMachine
+    }
 
-    /// Is the running machine rendering in a window the app does not own?
-    var runsInExternalWindow: Bool { engine is QEMUEngine }
+    /// Is this VM rendering in a window the app does not own?
+    func runsInExternalWindow(for id: UUID) -> Bool {
+        registry.instance(id)?.runsInExternalWindow ?? false
+    }
+
+    /// The engine holding this VM, once it is up. `nil` when it is not running;
+    /// the UI falls back to the engine that *will* host it.
+    func engineName(for id: UUID) -> String? {
+        registry.instance(id)?.engineName
+    }
 
     // MARK: - QEMU runtime
 
