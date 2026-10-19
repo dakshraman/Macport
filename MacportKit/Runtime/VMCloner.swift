@@ -125,7 +125,21 @@ public enum VMCloner {
             throw VMClonerError.cloneFailed(path: source.path, reason: "Could not read the bundle.")
         }
 
-        let prefix = source.path.hasSuffix("/") ? source.path : source.path + "/"
+        let prefix: String = {
+            // `FileManager` returns children under the canonical path
+            // (`/private/var/…`) even when the caller handed us `/var/…`.
+            // `URL.resolvingSymlinksInPath()` does not reliably rewrite that
+            // prefix, so ask the filesystem: `realpath` is the authority.
+            let resolved = source.path.withCString { realpath($0, nil) }
+            let canonical: String
+            if let resolved {
+                canonical = String(cString: resolved)
+                free(resolved)
+            } else {
+                canonical = source.path
+            }
+            return canonical.hasSuffix("/") ? canonical : canonical + "/"
+        }()
 
         for case let item as URL in enumerator {
             guard item.path.hasPrefix(prefix) else { continue }
