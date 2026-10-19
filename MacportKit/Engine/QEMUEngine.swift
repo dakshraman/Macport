@@ -355,6 +355,9 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     public func stop() async throws {
         guard let process else { return }
+        // A paused guest cannot process an ACPI event, so wake it before asking
+        // it to shut down; otherwise the request sits unread until the timeout.
+        let wasPaused = state == .paused
         state = .stopping
 
         // An ACPI power-button press, not a kill: `system_powerdown` asks the
@@ -366,6 +369,9 @@ public final class QEMUEngine: NSObject, VMEngine {
         // fallback for a machine whose control channel never came up.
         var requested = false
         if let qmp {
+            if wasPaused {
+                _ = try? await qmp.execute("cont")
+            }
             do {
                 _ = try await qmp.execute("system_powerdown")
                 requested = true
@@ -463,14 +469,22 @@ public final class QEMUEngine: NSObject, VMEngine {
     public func listMachineSnapshots() async throws -> [QEMUSnapshot] {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Snapshots")
+        return try await Self.listSnapshots(on: channel)
+    }
 
+    /// The snapshot table from whichever query this build answers.
+    ///
+    /// QMP's `query-snapshots` is tried first; the human monitor's
+    /// `info snapshots` is the fallback, because not every QEMU build answers
+    /// the former and every build prints the latter.
+    nonisolated private static func listSnapshots(on channel: QMPClient) async throws -> [QEMUSnapshot] {
         if let payload = try? await channel.execute("query-snapshots"),
-           let snapshots = Self.parseSnapshotListQMP(payload) {
+           let snapshots = parseSnapshotListQMP(payload) {
             return snapshots
         }
 
-        let text = try await Self.humanMonitor("info snapshots", on: channel)
-        return Self.parseSnapshotListHMP(text)
+        let text = try await humanMonitor("info snapshots", on: channel)
+        return parseSnapshotListHMP(text)
     }
 
     /// Take a snapshot of the machine: RAM and disk, under a stable tag.
@@ -545,10 +559,20 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     /// Delete a snapshot. Safe while the guest runs: `delvm` only touches the
     /// image, and QEMU refuses if the snapshot is the machine's current state.
+    ///
+    /// QEMU 11 answers `delvm` for a tag that does not exist with an empty
+    /// success reply, so existence is checked against the listing first: a
+    /// caller deleting a snapshot the machine does not have gets an error, not
+    /// a false success.
     public func deleteMachineSnapshot(id: String) async throws {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Delete snapshot")
         let tag = Self.sanitizeSnapshotName(id)
+
+        let snapshots = try await Self.listSnapshots(on: channel)
+        guard snapshots.contains(where: { $0.id == tag }) else {
+            throw EngineError.operationFailed("There is no snapshot named “\(tag)” to delete.")
+        }
         _ = try await Self.humanMonitor("delvm \(tag)", on: channel)
     }
 
@@ -635,19 +659,50 @@ public final class QEMUEngine: NSObject, VMEngine {
     }
 
     /// Send one human-monitor command over QMP and return its text output.
+    ///
+    /// HMP has no error channel of its own, so the reply is inspected before it
+    /// is treated as success; see `humanMonitorError(in:)`.
     nonisolated private static func humanMonitor(
         _ command: String,
         on channel: QMPClient
     ) async throws -> String {
+        let output: String
         do {
             let value = try await channel.execute(
                 "human-monitor-command",
                 arguments: ["command-line": .string(command)]
             )
-            return value.stringValue ?? ""
+            output = value.stringValue ?? ""
         } catch {
             throw engineError(from: error, operation: "QEMU rejected “\(command)”")
         }
+
+        if let failure = humanMonitorError(in: output) {
+            throw EngineError.operationFailed("QEMU rejected “\(command)”: \(failure)")
+        }
+        return output
+    }
+
+    /// The failure a human-monitor command reports inside its own output.
+    ///
+    /// HMP failures are ordinary text: `savevm`, `loadvm` and `delvm` write an
+    /// `Error: ...` line and still return a normal QMP reply, and the monitor
+    /// answers an unknown command the same way (`unknown command: 'x'`). A
+    /// success reply is empty or a table; both known failure spellings start a
+    /// line, so a line prefix is the whole test.
+    nonisolated static func humanMonitorError(in output: String) -> String? {
+        // HMP output is CRLF-terminated; `Character.isNewline` splits both
+        // endings (a CRLF grapheme cluster is not matched by "\n").
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("Error:") {
+                return line.dropFirst("Error:".count).trimmingCharacters(in: .whitespaces)
+            }
+            if line.hasPrefix("unknown command:") {
+                return line
+            }
+        }
+        return nil
     }
 
     /// Word a QMP failure the way a user can act on it.
@@ -746,6 +801,9 @@ public final class QEMUEngine: NSObject, VMEngine {
                 runBlocking(qemuImg, ["create", "-f", "qcow2", disk.path, String(config.diskBytes)])
             }
             if result.status == 0 { return }
+            // A failed create can leave a partial header behind, and the header
+            // is what the engine trusts — so remove it before falling back.
+            try? FileManager.default.removeItem(at: disk)
         }
 
         let disk = bundle.appendingPathComponent(diskFileName)
@@ -850,14 +908,16 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     /// Parse the human monitor's `info snapshots` table.
     ///
-    /// The header is
+    /// QEMU 11 prints
     ///
-    ///     ID        TAG                     VM SIZE                DATE       VM CLOCK
+    ///     ID      TAG               VM_SIZE                DATE        VM_CLOCK     ICOUNT
+    ///     --      Before update         0 B 2026-10-19 23:05:48  0000:00:00.000          0
     ///
-    /// and QEMU prints `There is no snapshot available.` when the disk has none.
-    /// Column widths differ between versions, so a snapshot row is recognised
-    /// by the date column — the one field with an unambiguous shape — and the
-    /// tag is whatever sits between the id and the size.
+    /// (older builds spell the headers `VM SIZE` / `VM CLOCK` and stop at the
+    /// clock). QEMU prints `There is no snapshot available.` when the disk has
+    /// none. Column widths differ between versions, so a snapshot row is
+    /// recognised by the date column — the one field with an unambiguous shape —
+    /// and the tag is whatever sits between the id and the size.
     nonisolated static func parseSnapshotListHMP(_ text: String) -> [QEMUSnapshot] {
         let emptyMarkers = [
             "There is no snapshot available",
@@ -866,8 +926,11 @@ public final class QEMUEngine: NSObject, VMEngine {
         ]
 
         var snapshots: [QEMUSnapshot] = []
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
+        // QEMU terminates HMP lines with CRLF, and Swift treats CRLF as one
+        // grapheme cluster — so splitting on "\n" would see the whole table as
+        // one line. Split on newline characters instead.
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty { continue }
             if emptyMarkers.contains(where: { line.hasPrefix($0) }) { continue }
             if line.hasPrefix("ID") && line.contains("TAG") { continue }
@@ -884,8 +947,10 @@ public final class QEMUEngine: NSObject, VMEngine {
     private nonisolated static func snapshotRow(_ line: String) -> QEMUSnapshot? {
         // Anchored on the date, which is the only column with a fixed shape.
         // ID is a number or `--`; TAG may contain spaces; SIZE is a byte count
-        // or `--`/`unavailable`; then date, then clock.
-        let pattern = #"^(--|\d+)\s+(.+?)\s+(\d+(?:\.\d+)?\s*[KMGTP]?i?B|--|unavailable)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?|--)"#
+        // or `--`/`unavailable`; then date, then clock. QEMU 11's clock hours
+        // run to four digits (`0000:00:00.000`) and an ICOUNT column follows
+        // the clock, so the match is not anchored at the end.
+        let pattern = #"^(--|\d+)\s+(.+?)\s+(\d+(?:\.\d+)?\s*[KMGTP]?i?B|--|unavailable)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([0-9]+:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?|--)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         guard let match = regex.firstMatch(in: line, range: range),

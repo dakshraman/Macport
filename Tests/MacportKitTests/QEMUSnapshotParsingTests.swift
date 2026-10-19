@@ -157,6 +157,32 @@ final class QEMUSnapshotParsingTests: XCTestCase {
         XCTAssertEqual(snapshots.map(\.id), ["baseline"])
     }
 
+    func testParsesRealQEMU11SnapshotTable() {
+        // Captured verbatim from QEMU 11.1.2 on macOS. The clock's hour field
+        // is four digits and an ICOUNT column trails every row; both broke the
+        // narrower parse this test now pins.
+        let text = "List of snapshots present on all disks:\r\n"
+            + "ID      TAG               VM_SIZE                DATE        VM_CLOCK     ICOUNT\r\n"
+            + "--      snap1                 0 B 2026-10-19 23:05:48  0000:00:00.000          0\r\n"
+            + "--      Before update         0 B 2026-10-19 23:05:48  0000:00:00.000          0\r\n"
+
+        let snapshots = QEMUEngine.parseSnapshotListHMP(text)
+        XCTAssertEqual(snapshots.map(\.id), ["snap1", "Before update"])
+        XCTAssertEqual(snapshots.map(\.includesMemory), [false, false])
+    }
+
+    func testParsesRealQEMU11SnapshotWithSavedMemory() {
+        // A `savevm` snapshot: byte-sized VM state, a sub-second clock, and no
+        // ICOUNT (QEMU prints `--` when it has no count to report).
+        let text = "List of snapshots present on all disks:\r\n"
+            + "ID      TAG               VM_SIZE                DATE        VM_CLOCK     ICOUNT\r\n"
+            + "--      probe-test       1.08 KiB 2026-10-19 23:07:09  0000:00:00.106         --\r\n"
+
+        let snapshots = QEMUEngine.parseSnapshotListHMP(text)
+        XCTAssertEqual(snapshots.map(\.id), ["probe-test"])
+        XCTAssertTrue(snapshots[0].includesMemory)
+    }
+
     // MARK: - QMP `query-snapshots`
 
     func testParsesQMPQuerySnapshotsPayload() throws {
@@ -225,6 +251,47 @@ final class QEMUSnapshotParsingTests: XCTestCase {
         XCTAssertEqual(
             mapped.localizedDescription,
             "Operation failed: Restore: Snapshot 'clean' does not exist"
+        )
+    }
+
+    func testHMPFailureTextIsDetected() {
+        // Exact QEMU 11.1.2 replies. A failed `savevm`/`loadvm` is not a QMP
+        // error: the monitor reports it as an `Error:` line inside the normal
+        // return string, so the engine must inspect the text.
+        XCTAssertEqual(
+            QEMUEngine.humanMonitorError(
+                in: "Error: Snapshot 'missing-tag' does not exist in one or more devices\r\n"
+            ),
+            "Snapshot 'missing-tag' does not exist in one or more devices"
+        )
+        XCTAssertEqual(
+            QEMUEngine.humanMonitorError(
+                in: "Error: This is a disk-only snapshot. Revert to it  offline using qemu-img\r\n"
+            ),
+            "This is a disk-only snapshot. Revert to it  offline using qemu-img"
+        )
+        XCTAssertEqual(
+            QEMUEngine.humanMonitorError(in: "unknown command: 'frobnicate'\r\n"),
+            "unknown command: 'frobnicate'"
+        )
+        // HMP errors can follow ordinary output; the failure line must be found
+        // even when it is not the first, and CRLF must split like LF.
+        XCTAssertEqual(
+            QEMUEngine.humanMonitorError(
+                in: "Snapshot devices: ide0-hd0\r\nError: Snapshot 'x' does not exist\r\n"
+            ),
+            "Snapshot 'x' does not exist"
+        )
+    }
+
+    func testHMPOutputWithoutAFailureLineIsAccepted() {
+        XCTAssertNil(QEMUEngine.humanMonitorError(in: ""))
+        XCTAssertNil(QEMUEngine.humanMonitorError(in: "There is no snapshot available.\r\n"))
+        XCTAssertNil(
+            QEMUEngine.humanMonitorError(
+                in: "List of snapshots present on all disks:\r\n"
+                    + "--      snap1                 0 B 2026-10-19 23:05:48  0000:00:00.000          0\r\n"
+            )
         )
     }
 

@@ -86,7 +86,7 @@ final class FakeQMPConnection: @unchecked Sendable {
 
     /// Send one newline-terminated JSON line.
     func send(_ line: String) {
-        var bytes = Array((line + "\n").utf8)
+        let bytes = Array((line + "\n").utf8)
         var offset = 0
         while offset < bytes.count {
             let written = bytes.withUnsafeBytes { raw -> Int in
