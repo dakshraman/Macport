@@ -1,0 +1,32 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+dist/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+
+# XcodeGen output
+Macport.xcodeproj/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# VM artifacts — never commit a disk image or an IPSW
+*.qcow2
+*.img
+*.ipsw
+*.iso
+*.macport
+
+# macOS
+.DS_Store
+._*
+
+# Local
+*.local.xcconfig

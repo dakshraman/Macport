@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Macport — UI design preview</title>
+<style>
+/* ============================================================
+   Macport UI — design preview
+   Tokens and behaviour are specified in docs/UI-SPEC.md
+   ============================================================ */
+
+:root{
+  color-scheme: light;
+
+  /* page (outside the app window) */
+  --page-bg: radial-gradient(1200px 760px at 18% -12%, #eaf1f6 0%, #dbe1e9 46%, #c8ced8 100%);
+  --page-fg: #1f242b;
+  --page-muted: #5f6873;
+  --page-card: rgba(255,255,255,.62);
+  --page-border: rgba(0,0,0,.10);
+
+  /* app window */
+  --bg-window: #ecedf0;
+  --bg-toolbar: rgba(243,244,247,.78);
+  --bg-sidebar: rgba(243,244,247,.72);
+  --bg-card: #ffffff;
+  --bg-inset: #f3f4f7;
+  --bg-hover: rgba(0,0,0,.035);
+  --window-border: rgba(0,0,0,.16);
+
+  --border-subtle: rgba(0,0,0,.075);
+  --border-strong: rgba(0,0,0,.14);
+
+  --text-primary: #1d1d20;
+  --text-secondary: #5b5f66;
+  --text-tertiary: #8a8f98;
+
+  --accent: #0e7c86;
+  --accent-subtle: rgba(14,124,134,.11);
+  --on-accent: #ffffff;
+
+  --state-running: #1e9e52;
+  --state-running-bg: rgba(30,158,82,.12);
+  --state-paused: #b4690e;
+  --state-paused-bg: rgba(180,105,14,.13);
+  --state-error: #d32f2f;
+  --state-error-bg: rgba(211,47,47,.11);
+  --state-off: #9aa0a8;
+  --state-off-bg: rgba(120,128,140,.13);
+
+  --danger-solid: #d32f2f;
+  --card-shadow: 0 1px 2px rgba(16,24,40,.07), 0 0 0 .5px rgba(16,24,40,.02);
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+[data-theme="dark"]{
+  color-scheme: dark;
+
+  --page-bg: radial-gradient(1200px 760px at 18% -12%, #24313d 0%, #141a22 46%, #090c10 100%);
+  --page-fg: #e6eaef;
+  --page-muted: #94a0ad;
+  --page-card: rgba(28,34,42,.72);
+  --page-border: rgba(255,255,255,.10);
+
+  --bg-window: #0f1216;
+  --bg-toolbar: rgba(21,24,30,.80);
+  --bg-sidebar: rgba(21,24,30,.72);
+  --bg-card: #171b21;
+  --bg-inset: #11151a;
+  --bg-hover: rgba(255,255,255,.05);
+  --window-border: rgba(255,255,255,.12);
+
+  --border-subtle: rgba(255,255,255,.08);
+  --border-strong: rgba(255,255,255,.16);
+
+  --text-primary: #edeff2;
+  --text-secondary: #a4abb6;
+  --text-tertiary: #6e7681;
+
+  --accent: #35c0cc;
+  --accent-subtle: rgba(53,192,204,.15);
+  --on-accent: #04252a;
+
+  --state-running: #3ddc84;
+  --state-running-bg: rgba(61,220,132,.14);
+  --state-paused: #e8a33d;
+  --state-paused-bg: rgba(232,163,61,.15);
+  --state-error: #ff6b6b;
+  --state-error-bg: rgba(255,107,107,.13);
+  --state-off: #6e7681;
+  --state-off-bg: rgba(150,158,170,.14);
+
+  --danger-solid: #e5484d;
+  --card-shadow: none;
+}
+
+*{ box-sizing: border-box; }
+html,body{ margin:0; padding:0; }
+body{
+  min-height: 100vh;
+  background: var(--page-bg);
+  background-attachment: fixed;
+  color: var(--page-fg);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum";
+}
+
+/* ---------- stage chrome (outside the app) ---------- */
+
+.stagebar{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding: 16px 24px 10px;
+  max-width: 1330px; margin: 0 auto;
+}
+.brand{ font-size:13px; font-weight:650; letter-spacing:.01em; }
+.brand span{ font-weight:400; color: var(--page-muted); margin-left:8px; }
+.tabs{ display:flex; gap:3px; flex-wrap:wrap; margin-left:auto; }
+.tab{
+  font: inherit; font-size:12px; padding:6px 10px; border-radius:7px;
+  border:1px solid transparent; background:transparent; color:var(--page-muted);
+  cursor:pointer; white-space:nowrap;
+}
+.tab:hover{ background: var(--page-card); }
+.tab.active{
+  background: var(--page-card); color: var(--page-fg);
+  border-color: var(--page-border); box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+.appearance{
+  display:flex; gap:2px; padding:2px; border-radius:8px;
+  border:1px solid var(--page-border); background: var(--page-card);
+}
+.appearance button{
+  font: inherit; font-size:11px; border:0; background:transparent; color:var(--page-muted);
+  padding:4px 8px; border-radius:6px; cursor:pointer;
+}
+.appearance button.on{ background: var(--page-fg); color: var(--page-card); }
+
+.stage{ padding: 10px 24px 12px; display:flex; justify-content:center; overflow:hidden; }
+.stage-note{
+  max-width:1280px; margin: 0 auto; padding: 2px 24px 40px;
+  font-size:11.5px; color: var(--page-muted); text-align:center;
+}
+kbd{
+  font-family: var(--font-mono); font-size:10.5px; padding:1px 5px;
+  border:1px solid var(--page-border); border-radius:4px; background: var(--page-card);
+}
+
+/* ---------- the app window ---------- */
+
+.window{
+  position:relative; display:flex; flex-direction:column;
+  width:1280px; height:800px; transform-origin: top center;
+  border-radius:12px; overflow:hidden;
+  background: var(--bg-window);
+  border:1px solid var(--window-border);
+  box-shadow: 0 40px 90px rgba(10,16,24,.34), 0 8px 24px rgba(10,16,24,.18);
+}
+
+/* titlebar */
+.titlebar{
+  position:relative; z-index:5;
+  flex:0 0 52px; height:52px;
+  display:flex; align-items:center; gap:12px;
+  padding:0 14px;
+  background: var(--bg-toolbar);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  border-bottom:1px solid var(--border-subtle);
+}
+.lights{ display:flex; gap:8px; margin-right:4px; }
+.light{ width:12px; height:12px; border-radius:50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+.light.r{ background:#ff5f57; } .light.y{ background:#febc2e; } .light.g{ background:#28c840; }
+.tb-toggle{
+  width:28px; height:28px; border-radius:7px; display:grid; place-items:center;
+  color: var(--text-secondary); border:1px solid transparent;
+}
+.tb-title{ font-family: var(--font-display); font-size:13px; font-weight:650; letter-spacing:.005em; }
+.spacer{ flex:1; }
+.search{
+  display:flex; align-items:center; gap:6px;
+  width:210px; height:28px; padding:0 9px;
+  border-radius:7px; border:1px solid var(--border-subtle);
+  background: var(--bg-inset); color: var(--text-tertiary); font-size:12px;
+}
+.runtime-chip{
+  display:flex; align-items:center; gap:6px;
+  height:28px; padding:0 10px; border-radius:999px;
+  border:1px solid var(--border-subtle); background: var(--bg-card);
+  font-size:11.5px; color: var(--text-secondary);
+}
+.runtime-chip .v{ font-family: var(--font-mono); font-size:11px; }
+
+/* split */
+.split{ flex:1; display:flex; min-height:0; }
+.sidebar{
+  flex:0 0 268px; width:268px; display:flex; flex-direction:column;
+  background: var(--bg-sidebar);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  border-right:1px solid var(--border-subtle);
+  padding-top:6px;
+}
+.detail{ flex:1; min-width:0; display:flex; flex-direction:column; background: var(--bg-window); position:relative; overflow:hidden; }
+
+/* sidebar */
+.side-head{
+  font-size:10.5px; font-weight:650; letter-spacing:.07em; text-transform:uppercase;
+  color: var(--text-tertiary); padding:10px 16px 6px;
+}
+.machine-row{
+  display:flex; align-items:center; gap:10px;
+  margin:1px 8px; padding:7px 9px; border-radius:7px;
+}
+.machine-row.is-selected{ background: var(--accent-subtle); }
+.machine-row:hover{ background: var(--bg-hover); }
+.machine-row.is-selected:hover{ background: var(--accent-subtle); }
+.dot{ width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+.dot.on{ background: var(--state-running); box-shadow: 0 0 0 3px var(--state-running-bg); }
+.dot.off{ background: var(--state-off); }
+.names{ min-width:0; flex:1; }
+.names .n{ font-size:13px; font-weight:500; color: var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.names .s{ font-size:10.5px; color: var(--text-tertiary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px; }
+.run-label{ font-size:10.5px; font-weight:500; color: var(--state-running); flex:0 0 auto; }
+.machines-empty{ padding:8px 16px 4px; font-size:12px; color: var(--text-tertiary); }
+.side-foot{ margin-top:auto; border-top:1px solid var(--border-subtle); padding:6px 8px 8px; }
+.side-row{
+  display:flex; align-items:center; gap:8px;
+  height:30px; padding:0 8px; border-radius:7px;
+  font-size:11.5px; color: var(--text-secondary);
+}
+.side-row:hover{ background: var(--bg-hover); }
+.side-row .plus{ color: var(--text-secondary); }
+.side-row .mono{ font-family: var(--font-mono); font-size:11px; color: var(--text-secondary); }
+/* ---------- icons ---------- */
+.ic{ width:15px; height:15px; flex:0 0 auto; display:block; }
+.ic-lg{ width:22px; height:22px; flex:0 0 auto; display:block; }
+.ic-xl{ width:34px; height:34px; flex:0 0 auto; display:block; }
+
+/* ---------- buttons ---------- */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  height:28px; padding:0 11px; border-radius:7px;
+  border:1px solid var(--border-strong); background: var(--bg-card);
+  color: var(--text-primary); font: inherit; font-size:12px; font-weight:500;
+  cursor:pointer; white-space:nowrap;
+}
+.btn:hover{ background: var(--bg-hover); }
+.btn.primary{
+  background: var(--accent); border-color:transparent; color: var(--on-accent); font-weight:600;
+}
+.btn.primary:hover{ filter: brightness(1.06); }
+.btn.lg{ height:32px; padding:0 15px; font-size:13px; border-radius:8px; }
+.btn.sm{ height:25px; padding:0 9px; font-size:11.5px; border-radius:6px; }
+.btn.icon{ width:28px; padding:0; }
+.btn.icon.lg{ width:32px; height:32px; border-radius:8px; }
+.btn:disabled{ opacity:.42; cursor:not-allowed; }
+.btn.ghost{ background:transparent; border-color:transparent; color: var(--text-secondary); }
+.link{
+  font: inherit; font-size:11.5px; color: var(--accent); background:none; border:0;
+  padding:0; cursor:pointer;
+}
+.link:hover{ text-decoration:underline; }
+
+/* ---------- pills / chips ---------- */
+.pill{
+  display:inline-flex; align-items:center; gap:6px;
+  height:22px; padding:0 9px; border-radius:999px;
+  font-size:11px; font-weight:600; white-space:nowrap;
+}
+.pill .pdot{ width:6px; height:6px; border-radius:50%; background: currentColor; }
+.pill.off{ background: var(--state-off-bg); color: var(--text-secondary); }
+.pill.running{ background: var(--state-running-bg); color: var(--state-running); }
+.pill.paused{ background: var(--state-paused-bg); color: var(--state-paused); }
+.pill.error{ background: var(--state-error-bg); color: var(--state-error); }
+.pill.starting{ background: var(--accent-subtle); color: var(--accent); }
+.chip{
+  display:inline-flex; align-items:center; gap:4px;
+  height:19px; padding:0 7px; border-radius:6px;
+  border:1px solid var(--border-subtle); background: var(--bg-card);
+  font-family: var(--font-mono); font-size:10px; letter-spacing:.02em;
+  color: var(--text-secondary); white-space:nowrap;
+}
+
+/* ---------- avatars ---------- */
+.guest-win{ --hue:#2a6db3; --tint:rgba(42,109,179,.12); }
+.guest-linux{ --hue:#a35f10; --tint:rgba(163,95,16,.13); }
+.guest-macos{ --hue:#5b6472; --tint:rgba(91,100,114,.13); }
+[data-theme="dark"] .guest-win{ --hue:#7fb6f0; --tint:rgba(127,182,240,.14); }
+[data-theme="dark"] .guest-linux{ --hue:#e8ae62; --tint:rgba(232,174,98,.14); }
+[data-theme="dark"] .guest-macos{ --hue:#aab3c0; --tint:rgba(170,179,192,.13); }
+.avatar{
+  width:44px; height:44px; border-radius:12px; flex:0 0 auto;
+  display:grid; place-items:center; background: var(--tint); color: var(--hue);
+}
+.avatar.sm{ width:28px; height:28px; border-radius:8px; }
+.avatar.sm .ic{ width:15px; height:15px; }
+
+/* ---------- detail layout ---------- */
+.detail-screen{
+  display:none; flex-direction:column; gap:16px;
+  height:100%; padding:20px 22px; overflow:auto;
+}
+.detail-screen.active{ display:flex; }
+
+.vm-header{ display:flex; align-items:center; gap:12px; }
+.vm-id{ min-width:0; }
+.vm-id h1{
+  margin:0; font-family: var(--font-display);
+  font-size:27px; line-height:32px; font-weight:650; letter-spacing:-.015em;
+  color: var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.vm-id .sub{ margin-top:2px; font-size:12px; color: var(--text-secondary); }
+.sep{ color: var(--text-tertiary); margin:0 4px; }
+
+/* ---------- cards ---------- */
+.cards{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+.col{ display:flex; flex-direction:column; gap:16px; min-width:0; }
+.card{
+  background: var(--bg-card); border:1px solid var(--border-subtle);
+  border-radius:12px; padding:15px 16px 14px; box-shadow: var(--card-shadow);
+}
+.card-head{ display:flex; align-items:center; gap:8px; margin-bottom:11px; }
+.card-title{ font-size:13px; font-weight:650; color: var(--text-primary); }
+.card-divider{ height:1px; background: var(--border-subtle); margin:11px 0 10px; }
+.kv{ display:grid; grid-template-columns:104px 1fr; gap:7px 14px; font-size:12.5px; }
+.kv .k{ color: var(--text-secondary); }
+.kv .v{ color: var(--text-primary); min-width:0; }
+.mono{ font-family: var(--font-mono); font-size:11.5px; }
+.muted{ color: var(--text-tertiary); }
+.ellip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hint{
+  display:flex; gap:7px; font-size:11.5px; line-height:16px;
+  color: var(--text-tertiary); margin-top:10px;
+}
+.hint .ic{ width:14px; height:14px; margin-top:1px; color: var(--text-tertiary); }
+.hint.warn{ color: var(--state-paused); }
+.hint.warn .ic{ color: var(--state-paused); }
+
+/* capacity meters */
+.meter{ margin-bottom:12px; }
+.meter:last-of-type{ margin-bottom:0; }
+.meter-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; }
+.meter-top .t{ font-size:12.5px; color: var(--text-secondary); }
+.meter-top .n{ font-size:12px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.meter-top .n .muted{ font-weight:400; }
+.track{ height:6px; border-radius:99px; background: var(--bg-inset); overflow:hidden; }
+.fill{ height:100%; border-radius:99px; background: var(--accent); }
+.fill.disk{ background: var(--accent); opacity:.75; }
+
+/* capability rows */
+.cap{ display:flex; align-items:center; gap:8px; padding:3.5px 0; font-size:12.5px; }
+.cap .ic{ width:14px; height:14px; }
+.cap .name{ color: var(--text-secondary); }
+.cap .verdict{ margin-left:auto; display:flex; align-items:center; gap:5px; font-size:11.5px; white-space:nowrap; }
+.ok{ color: var(--state-running); } .no{ color: var(--text-tertiary); } .warn{ color: var(--state-paused); }
+
+/* file row */
+.file-row{ display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; background: var(--bg-inset); }
+.file-row .ic{ color: var(--text-tertiary); }
+.file-meta{ min-width:0; }
+.file-name{ font-family: var(--font-mono); font-size:11.5px; color: var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.file-sub{ font-size:11px; color: var(--text-tertiary); margin-top:2px; }
+.row-actions{ display:flex; gap:8px; margin-top:10px; }
+
+/* log */
+.log{
+  background: var(--bg-inset); border:1px solid var(--border-subtle); border-radius:8px;
+  padding:9px 11px; font-family: var(--font-mono); font-size:10.5px; line-height:17px;
+  color: var(--text-secondary); white-space:pre-wrap; word-break:break-word;
+}
+.log .t{ color: var(--text-tertiary); }
+.log .ok{ color: var(--state-running); }
+.log .warn{ color: var(--state-paused); }
+.log .err{ color: var(--state-error); }
+
+/* table */
+.table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+.table th{
+  text-align:left; font-size:10px; font-weight:650; letter-spacing:.07em; text-transform:uppercase;
+  color: var(--text-tertiary); padding:8px 10px; border-bottom:1px solid var(--border-subtle);
+}
+.table td{ padding:9px 10px; border-bottom:1px solid var(--border-subtle); color: var(--text-primary); }
+.table tr:last-child td{ border-bottom:0; }
+.cell-name{ display:flex; align-items:center; gap:9px; }
+.cell-name .n{ font-weight:500; }
+.lib-head{ display:flex; align-items:baseline; gap:10px; }
+.lib-head h2{ margin:0; font-family:var(--font-display); font-size:19px; font-weight:650; letter-spacing:-.01em; }
+.lib-head .sub{ font-size:12px; color: var(--text-tertiary); }
+
+/* ---------- console ---------- */
+.console-screen{ padding:14px 18px 18px; gap:11px; }
+.console-head{ display:flex; align-items:center; gap:10px; }
+.console-head .name{ font-size:13px; font-weight:650; color: var(--text-primary); }
+.console-surface{
+  position:relative; flex:1; min-height:0; border-radius:10px; overflow:hidden;
+  background:#08090b; border:1px solid var(--border-subtle);
+}
+.console-bar{
+  position:absolute; left:50%; bottom:16px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:2px; height:40px; padding:0 5px;
+  border-radius:11px; border:1px solid rgba(255,255,255,.13);
+  background: rgba(30,32,36,.66);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  box-shadow: 0 8px 26px rgba(0,0,0,.38);
+}
+.cb{
+  width:30px; height:30px; border-radius:7px; display:grid; place-items:center;
+  color: rgba(255,255,255,.82); border:0; background:transparent; cursor:default;
+}
+.cb:hover{ background: rgba(255,255,255,.10); }
+.cb .ic{ width:15px; height:15px; }
+.cb-sep{ width:1px; height:17px; background: rgba(255,255,255,.14); margin:0 3px; }
+
+/* mock Ubuntu guest */
+.ub{
+  position:absolute; inset:0;
+  background:
+    radial-gradient(820px 460px at 72% 18%, rgba(122,74,168,.55), transparent 62%),
+    radial-gradient(700px 500px at 18% 92%, rgba(38,92,146,.45), transparent 65%),
+    linear-gradient(150deg, #241b2e 0%, #191521 48%, #0c0a10 100%);
+  font-family: var(--font-ui); color:#fff;
+}
+.ub-bar{
+  position:absolute; top:0; left:0; right:0; height:26px;
+  display:flex; align-items:center; gap:14px; padding:0 10px;
+  background: rgba(0,0,0,.42); font-size:10.5px; color: rgba(255,255,255,.88);
+}
+.ub-bar .clock{ position:absolute; left:50%; transform:translateX(-50%); text-align:center; font-size:10px; line-height:11px; }
+.ub-bar .status{ margin-left:auto; display:flex; gap:8px; align-items:center; opacity:.85; }
+.ub-dock{
+  position:absolute; left:5px; top:34px; bottom:8px; width:46px;
+  display:flex; flex-direction:column; align-items:center; gap:7px; padding-top:6px;
+  border-radius:12px; background: rgba(18,16,24,.58); border:1px solid rgba(255,255,255,.07);
+}
+.ub-icon{ width:32px; height:32px; border-radius:9px; background: linear-gradient(150deg, rgba(255,255,255,.20), rgba(255,255,255,.06)); border:1px solid rgba(255,255,255,.10); }
+.ub-icon.orange{ background: linear-gradient(150deg,#e95420,#b83c12); }
+.ub-icon.dot{ width:6px; height:6px; border-radius:50%; background: rgba(255,255,255,.5); border:0; margin-top:auto; }
+.ub-win{
+  position:absolute; left:50%; top:47%; transform:translate(-50%,-50%);
+  width:600px; border-radius:9px; overflow:hidden;
+  background: rgba(24,22,29,.94); border:1px solid rgba(255,255,255,.12);
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.ub-win-bar{ display:flex; align-items:center; gap:7px; height:30px; padding:0 10px; background: rgba(255,255,255,.05); border-bottom:1px solid rgba(255,255,255,.07); }
+.tl{ width:10px; height:10px; border-radius:50%; background: rgba(255,255,255,.22); }
+.tl.r{ background:#e35b5b; } .tl.y{ background:#e0a33a; } .tl.g{ background:#4fae5c; }
+.ub-win-bar .tt{ margin-left:6px; font-size:10.5px; color: rgba(255,255,255,.6); }
+.ub-term{ padding:12px 14px 16px; font-family: var(--font-mono); font-size:11px; line-height:18px; color:#d8dde3; }
+.ub-term .p{ color:#8fd694; } .ub-term .c{ color:#9fb3c8; } .ub-term .o{ color:#c9d1d9; }
+.ub-term .cy{ color:#7cc7d8; }
+.cursor{ display:inline-block; width:6px; height:12px; background:#d8dde3; vertical-align:-1px; animation: blink 1.2s steps(1) infinite; }
+@keyframes blink{ 50%{ opacity:0; } }
+@media (prefers-reduced-motion: reduce){ .cursor{ animation:none; } }
+
+/* external console card */
+.external-wrap{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; }
+.ext-card{
+  width:560px; max-width:100%; padding:28px 30px 24px; border-radius:14px;
+  background: var(--bg-card); border:1px solid var(--border-subtle); box-shadow: var(--card-shadow);
+  text-align:center;
+}
+.ext-icon{ display:grid; place-items:center; width:52px; height:52px; margin:0 auto 14px; border-radius:14px; background: var(--accent-subtle); color: var(--accent); }
+.ext-card h2{ margin:0 0 8px; font-family:var(--font-display); font-size:16px; font-weight:650; letter-spacing:-.01em; color: var(--text-primary); }
+.ext-card p{ margin:0 auto; max-width:420px; font-size:12.5px; line-height:18px; color: var(--text-secondary); }
+.ext-actions{ display:flex; align-items:center; justify-content:center; gap:8px; margin-top:18px; }
+.ext-note{ font-size:11px; color: var(--text-tertiary); margin-top:12px; }
+.ext-caption{ font-size:11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+/* ---------- first run ---------- */
+.firstrun{ align-items:center; justify-content:center; }
+.firstrun-inner{ width:520px; max-width:100%; display:flex; flex-direction:column; align-items:center; text-align:center; gap:16px; margin-top:-30px; }
+.dropzone{
+  width:100%; padding:26px 24px; border-radius:12px;
+  border:1.5px dashed var(--border-strong); background: var(--bg-inset);
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+}
+.dropzone .ic-xl{ color: var(--text-tertiary); }
+.dz-title{ font-size:14px; font-weight:600; color: var(--text-primary); }
+.dz-sub{ font-size:12px; color: var(--text-secondary); }
+.lede{ margin:0; font-size:12.5px; line-height:19px; color: var(--text-secondary); }
+.lede .mono{ font-size:11.5px; }
+.ic, .ic-lg, .ic-xl{
+  fill:none; stroke:currentColor; stroke-width:1.5;
+  stroke-linecap:round; stroke-linejoin:round;
+}
+
+/* ---------- sheets ---------- */
+.scrim{
+  position:absolute; inset:52px 0 0; z-index:20;
+  background: rgba(8,12,18,.34);
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition: opacity .18s ease;
+}
+.scrim.active{ opacity:1; visibility:visible; pointer-events:auto; }
+.sheet{
+  position:absolute; z-index:21; left:50%; top:50%;
+  transform: translate(-50%,-50%) scale(.985);
+  opacity:0; visibility:hidden; pointer-events:none;
+  display:flex; flex-direction:column;
+  background: var(--bg-card);
+  border:1px solid var(--window-border); border-radius:12px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.42);
+  overflow:hidden;
+  transition: opacity .18s ease, transform .18s ease, visibility .18s;
+}
+.sheet.active{ opacity:1; visibility:visible; pointer-events:auto; transform: translate(-50%,-50%) scale(1); }
+.sheet-head{ display:flex; align-items:center; gap:10px; padding:14px 16px 10px; }
+.sheet-title{ font-family: var(--font-display); font-size:14px; font-weight:650; color: var(--text-primary); }
+.sheet-body{ flex:1; min-height:0; padding:4px 22px 20px; overflow:auto; }
+.sheet-foot{
+  display:flex; align-items:center; gap:8px;
+  padding:12px 16px; border-top:1px solid var(--border-subtle); background: var(--bg-inset);
+}
+.sheet-foot .flex1{ flex:1; }
+
+/* steps */
+.steps{ display:flex; align-items:center; gap:4px; padding:0 22px 16px; }
+.step{
+  display:flex; align-items:center; gap:7px;
+  font-size:11.5px; color: var(--text-tertiary);
+  padding:5px 8px; border-radius:6px; white-space:nowrap;
+}
+.step .num{
+  width:17px; height:17px; border-radius:50%;
+  display:grid; place-items:center;
+  font-size:9.5px; font-weight:650;
+  border:1px solid var(--border-strong); color: var(--text-tertiary);
+}
+.step.done .num{ background: var(--accent); border-color:transparent; color: var(--on-accent); }
+.step.done{ color: var(--text-secondary); }
+.step.current{ color: var(--text-primary); font-weight:600; background: var(--accent-subtle); }
+.step.current .num{ background: var(--accent); border-color:transparent; color: var(--on-accent); }
+.step-line{ flex:1; height:1px; background: var(--border-subtle); margin:0 2px; }
+
+/* guest choice cards */
+.guest-cards{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:2px; }
+.guest-card{
+  display:flex; flex-direction:column; gap:8px; min-height:178px;
+  padding:14px; border-radius:11px; font: inherit; text-align:left;
+  border:1px solid var(--border-strong); background: var(--bg-card); cursor:pointer;
+}
+.guest-card:hover{ border-color: var(--accent); }
+.guest-card.selected{ border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.guest-card .gc-name{ font-size:13.5px; font-weight:650; color: var(--text-primary); }
+.guest-card .gc-desc{ flex:1; font-size:11.5px; line-height:16px; color: var(--text-secondary); }
+.guest-card .gc-foot{ display:flex; align-items:center; gap:6px; }
+.sel-dot{ width:14px; height:14px; border-radius:50%; border:1px solid var(--border-strong); margin-left:auto; }
+.guest-card.selected .sel-dot{
+  border-color: var(--accent);
+  background: radial-gradient(circle at center, var(--accent) 0 44%, transparent 47%);
+}
+
+/* review step */
+.review{ display:grid; grid-template-columns: 1fr 318px; gap:18px; }
+.review .kv{ grid-template-columns: 96px 1fr; }
+.expect{ border:1px solid var(--border-subtle); border-radius:10px; background: var(--bg-inset); padding:13px 14px; }
+.expect h3{ margin:0 0 10px; font-size:12px; font-weight:650; color: var(--text-primary); }
+.exp-item{ display:flex; gap:8px; font-size:11.5px; line-height:16px; color: var(--text-secondary); margin-bottom:9px; }
+.exp-item:last-child{ margin-bottom:0; }
+.exp-item .ic{ width:14px; height:14px; margin-top:1px; }
+
+/* screen visibility helpers */
+.machines-empty{ display:none; }
+body[data-screen="firstrun"] .machines-empty{ display:block; }
+body[data-screen="firstrun"] .machine-row{ display:none; }
+body[data-screen="firstrun"] .only-regular{ display:none; }
+body:not([data-screen="firstrun"]) .only-firstrun{ display:none; }
+body[data-screen="console"] .machine-row.is-selected{ background:transparent; }
+body[data-screen="console"] .machine-row[data-vm="ubuntu"]{ background: var(--accent-subtle); }
+</style>
+</head>
+<body data-screen="dashboard">
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4"/><path d="m10.4 10.4 3.1 3.1"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6.2 3v10"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 16 16"><path d="m4.5 6.25 3.5 3.5 3.5-3.5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.6v8.8L12.2 8z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-power" viewBox="0 0 16 16"><path d="M8 2.2v5.4"/><path d="M4.9 4.4a4.6 4.6 0 1 0 6.2 0"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><rect x="5" y="4" width="1.8" height="8" rx=".6" fill="currentColor" stroke="none"/><rect x="9.2" y="4" width="1.8" height="8" rx=".6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.6" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="8" r=".9" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 16 16"><rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1.4"/><path d="M6.2 1.8v2M9.8 1.8v2M6.2 12.2v2M9.8 12.2v2M1.8 6.2h2M1.8 9.8h2M12.2 6.2h2M12.2 9.8h2"/></symbol>
+  <symbol id="i-mem" viewBox="0 0 16 16"><rect x="2" y="5" width="12" height="6" rx="1.2"/><path d="M4.4 8h.01M6.8 8h.01M9.2 8h.01M11.6 8h.01"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 16 16"><rect x="2.2" y="3.4" width="11.6" height="9.2" rx="1.8"/><circle cx="8" cy="8" r="2.4"/></symbol>
+  <symbol id="i-net" viewBox="0 0 16 16"><circle cx="8" cy="3.4" r="1.6"/><circle cx="3.4" cy="12" r="1.6"/><circle cx="12.6" cy="12" r="1.6"/><path d="M7 4.8 4 10.6M9 4.8l3 5.8M5 12h6"/></symbol>
+  <symbol id="i-term" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8"/><path d="m4.6 6.2 2 1.8-2 1.8M8.4 10h3"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.6"/><path d="M8 11v2.2M5.6 13.4h4.8"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.5 14 13H2z"/><path d="M8 6.4v3.2"/><circle cx="8" cy="11.3" r=".75" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6"/><path d="M8 7.2v3.2"/><circle cx="8" cy="5.4" r=".7" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6"/><path d="m5.6 8.2 1.7 1.7 3.2-3.6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.4 4.4 7.2 7.2M11.6 4.4l-7.2 7.2"/></symbol>
+  <symbol id="i-slash" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6"/><path d="M4.4 11.6 11.6 4.4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.4" y="5.4" width="8" height="8" rx="1.4"/><path d="M10.6 3.4a1.4 1.4 0 0 0-1.4-1.4H3.8a1.4 1.4 0 0 0-1.4 1.4v5.4a1.4 1.4 0 0 0 1.4 1.4"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 16 16"><path d="M9.2 2.8h4v4M13.2 2.8 7.6 8.4"/><path d="M12 9.4v2.4a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4V5.4A1.4 1.4 0 0 1 4.2 4h2.4"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 16 16"><rect x="2" y="4.6" width="12" height="8" rx="1.8"/><circle cx="8" cy="8.6" r="2.2"/><path d="m5.6 4.6.8-1.2h3.2l.8 1.2"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 16 16"><path d="M6 2.6H2.6V6M10 2.6h3.4V6M6 13.4H2.6V10M10 13.4h3.4V10"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 16 16"><rect x="1.8" y="4.2" width="12.4" height="7.6" rx="1.6"/><path d="M4.2 6.6h.01M6.4 6.6h.01M8.6 6.6h.01M10.8 6.6h.01M4.2 9h.01M11 9h.01M6 9h4"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.6v6.6M5.4 6.8 8 9.4l2.6-2.6M3 11.4v1.2a.8.8 0 0 0 .8.8h8.4a.8.8 0 0 0 .8-.8v-1.2"/></symbol>
+  <symbol id="i-cd" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="1.6"/></symbol>
+  <symbol id="i-win" viewBox="0 0 16 16"><rect x="2.4" y="2.4" width="5.1" height="5.1" rx=".7" fill="currentColor" stroke="none"/><rect x="8.5" y="2.4" width="5.1" height="5.1" rx=".7" fill="currentColor" stroke="none"/><rect x="2.4" y="8.5" width="5.1" height="5.1" rx=".7" fill="currentColor" stroke="none"/><rect x="8.5" y="8.5" width="5.1" height="5.1" rx=".7" fill="currentColor" stroke="none"/></symbol>
+</svg>
+
+<div class="stagebar">
+  <div class="brand">Macport <span>UI design preview</span></div>
+  <div class="tabs">
+    <button class="tab active" data-screen="dashboard">Dashboard</button>
+    <button class="tab" data-screen="console">Console</button>
+    <button class="tab" data-screen="external">External console</button>
+    <button class="tab" data-screen="library">Library</button>
+    <button class="tab" data-screen="firstrun">First run</button>
+    <button class="tab" data-screen="create1">Create · guest</button>
+    <button class="tab" data-screen="create4">Create · review</button>
+    <button class="tab" data-screen="runtime">Runtime</button>
+    <button class="tab" data-screen="problem">Problem</button>
+  </div>
+  <div class="appearance">
+    <button id="theme-light" class="on">Light</button>
+    <button id="theme-dark">Dark</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="window">
+
+    <div class="titlebar">
+      <div class="lights"><span class="light r"></span><span class="light y"></span><span class="light g"></span></div>
+      <div class="tb-toggle"><svg class="ic"><use href="#i-sidebar"/></svg></div>
+      <div class="tb-title">Macport</div>
+      <div class="spacer"></div>
+      <div class="search"><svg class="ic" style="width:13px;height:13px"><use href="#i-search"/></svg>Search</div>
+      <div class="runtime-chip">
+        <span class="dot on only-regular" style="width:6px;height:6px"></span>
+        <span class="only-regular">QEMU <span class="v">11.1.2</span></span>
+        <span class="dot off only-firstrun" style="width:6px;height:6px"></span>
+        <span class="only-firstrun">Runtime missing</span>
+      </div>
+      <button class="btn primary"><svg class="ic" style="width:12px;height:12px"><use href="#i-plus"/></svg>New VM</button>
+    </div>
+
+    <div class="split">
+      <aside class="sidebar">
+        <div class="side-head">Machines</div>
+        <div class="machine-row is-selected" data-vm="windows">
+          <span class="dot off"></span>
+          <div class="names"><div class="n">Windows 11</div><div class="s">Windows 11 (Arm) · QEMU</div></div>
+        </div>
+        <div class="machine-row" data-vm="ubuntu">
+          <span class="dot on"></span>
+          <div class="names"><div class="n">Ubuntu Test</div><div class="s">Linux (ARM64) · VZ</div></div>
+          <div class="run-label">Running</div>
+        </div>
+        <div class="machine-row" data-vm="macos">
+          <span class="dot off"></span>
+          <div class="names"><div class="n">macOS Test</div><div class="s">macOS · VZ</div></div>
+        </div>
+        <div class="machines-empty">No machines yet</div>
+
+        <div class="side-foot">
+          <div class="side-row">
+            <span class="dot on only-regular" style="width:7px;height:7px"></span>
+            <span class="only-regular">QEMU <span class="mono">11.1.2</span> · ready</span>
+            <span class="dot off only-firstrun" style="width:7px;height:7px"></span>
+            <span class="only-firstrun">Runtime not installed</span>
+          </div>
+          <div class="side-row"><svg class="ic plus" style="width:14px;height:14px"><use href="#i-plus"/></svg>New Virtual Machine…</div>
+        </div>
+      </aside>
+
+      <section class="detail">
+
+        <!-- ============ DASHBOARD ============ -->
+        <section class="detail-screen active" data-screen="dashboard">
+          <header class="vm-header">
+            <div class="avatar guest-win"><svg class="ic-lg"><use href="#i-win"/></svg></div>
+            <div class="vm-id">
+              <h1>Windows 11</h1>
+              <div class="sub">Windows 11 (Arm) <span class="sep">·</span> QEMU 11.1.2</div>
+            </div>
+            <div class="pill off"><span class="pdot"></span>Off</div>
+            <span class="chip">QEMU</span>
+            <div class="spacer"></div>
+            <button class="btn primary lg"><svg class="ic"><use href="#i-play"/></svg>Start</button>
+            <button class="btn icon lg" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
+          </header>
+
+          <div class="cards">
+            <div class="col">
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Hardware</div><div class="spacer"></div><button class="link">Edit…</button></div>
+                <div class="meter">
+                  <div class="meter-top"><span class="t">Processors</span><span class="n">6 <span class="muted">of 12 cores</span></span></div>
+                  <div class="track"><div class="fill" style="width:50%"></div></div>
+                </div>
+                <div class="meter">
+                  <div class="meter-top"><span class="t">Memory</span><span class="n">6 <span class="muted">of 8 GB</span></span></div>
+                  <div class="track"><div class="fill" style="width:75%"></div></div>
+                </div>
+                <div class="meter">
+                  <div class="meter-top"><span class="t">Disk</span><span class="n">12.4 <span class="muted">of 80 GB</span></span></div>
+                  <div class="track"><div class="fill disk" style="width:15.5%"></div></div>
+                </div>
+                <div class="hint"><svg class="ic"><use href="#i-info"/></svg><span>Disk storage is sparse — the file grows as the guest writes.</span></div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Storage</div></div>
+                <div class="kv">
+                  <div class="k">Bundle</div><div class="v mono ellip">Windows 11.macport</div>
+                  <div class="k">Location</div><div class="v mono ellip muted">~/Library/Application Support/Macport/VMs</div>
+                  <div class="k">On disk</div><div class="v">12.4 GB <span class="muted">up to 80 GB</span></div>
+                </div>
+                <div class="row-actions"><button class="btn sm">Reveal in Finder</button><button class="btn sm">Show log</button></div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Last activity</div><div class="spacer"></div><button class="link">Open log</button></div>
+                <div class="log"><span class="t">20:58:41</span> <span class="ok">●</span> BdsDxe: starting Boot0001 "UEFI QEMU QEMU USB HARDDRIVE"
+<span class="t">20:58:47</span> <span class="ok">●</span> Windows Boot Manager: bootmgfw.efi
+<span class="t">21:12:03</span> <span class="ok">●</span> Setup: disk 0 selected · copying files
+<span class="t">21:31:20</span> <span class="warn">▲</span> Guest powered off before setup completed</div>
+                <div class="row-actions"><button class="btn sm"><svg class="ic" style="width:13px;height:13px"><use href="#i-copy"/></svg>Copy details</button></div>
+              </div>
+
+            </div>
+            <div class="col">
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Engine — QEMU</div><div class="spacer"></div><span class="chip">11.1.2</span></div>
+                <div class="cap"><svg class="ic ok"><use href="#i-check"/></svg><span class="name">Optical boot media</span><span class="verdict ok">Supported</span></div>
+                <div class="cap"><svg class="ic no"><use href="#i-slash"/></svg><span class="name">Virtual TPM 2.0</span><span class="verdict no">Not available</span></div>
+                <div class="cap"><svg class="ic no"><use href="#i-slash"/></svg><span class="name">Snapshots</span><span class="verdict no">Not available</span></div>
+                <div class="cap"><svg class="ic no"><use href="#i-slash"/></svg><span class="name">Shared folders</span><span class="verdict no">Not available</span></div>
+                <div class="cap"><svg class="ic no"><use href="#i-slash"/></svg><span class="name">USB passthrough</span><span class="verdict no">Not available</span></div>
+                <div class="cap"><svg class="ic no"><use href="#i-slash"/></svg><span class="name">Graphics acceleration</span><span class="verdict no">Software framebuffer</span></div>
+                <div class="card-divider"></div>
+                <div class="hint"><svg class="ic"><use href="#i-info"/></svg><span>Windows routes here because only an optical device can boot its installer. Virtualization.framework has no CD-ROM at all.</span></div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Install media</div></div>
+                <div class="file-row">
+                  <svg class="ic"><use href="#i-cd"/></svg>
+                  <div class="file-meta">
+                    <div class="file-name">Win11_25H2_EnglishInternational_Arm64_v2.iso</div>
+                    <div class="file-sub">8.0 GB <span class="sep">·</span> attached as a USB CD-ROM</div>
+                  </div>
+                </div>
+                <div class="row-actions"><button class="btn sm">Eject</button><button class="btn sm">Change…</button></div>
+                <div class="hint"><svg class="ic"><use href="#i-info"/></svg><span>Setup reads its El Torito boot image from this device — the one transport both the firmware and Windows accept.</span></div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><div class="card-title">Networking</div></div>
+                <div class="kv">
+                  <div class="k">Mode</div><div class="v">Shared (NAT)</div>
+                  <div class="k">Guest IP</div><div class="v muted">Not detected</div>
+                </div>
+                <div class="hint warn"><svg class="ic"><use href="#i-warn"/></svg><span>Windows ships no inbox driver for this engine's network device, so the guest will not see a network yet.</span></div>
+                <div class="row-actions"><button class="btn sm">Change…</button></div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ CONSOLE — embedded (Virtualization.framework) ============ -->
+        <section class="detail-screen console-screen" data-screen="console">
+          <header class="console-head">
+            <div class="avatar sm guest-linux"><svg class="ic"><use href="#i-term"/></svg></div>
+            <span class="name">Ubuntu Test</span>
+            <div class="pill running"><span class="pdot"></span>Running</div>
+            <span class="chip">VZ</span>
+            <div class="spacer"></div>
+            <button class="btn">Shut Down <svg class="ic" style="width:12px;height:12px"><use href="#i-chevron-down"/></svg></button>
+            <button class="btn icon" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
+          </header>
+
+          <div class="console-surface">
+            <div class="ub">
+              <div class="ub-bar">
+                <div>Activities</div>
+                <div class="clock">21:48<br>Mon 19 Oct</div>
+                <div class="status">
+                  <svg class="ic" style="width:13px;height:13px"><use href="#i-net"/></svg>
+                  <svg class="ic" style="width:13px;height:13px"><use href="#i-mem"/></svg>
+                  <svg class="ic" style="width:13px;height:13px"><use href="#i-power"/></svg>
+                </div>
+              </div>
+              <div class="ub-dock">
+                <div class="ub-icon orange"></div>
+                <div class="ub-icon"></div>
+                <div class="ub-icon"></div>
+                <div class="ub-icon"></div>
+                <div class="ub-icon"></div>
+                <div class="ub-icon dot"></div>
+              </div>
+              <div class="ub-win">
+                <div class="ub-win-bar"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span><span class="tt">raman@ubuntu: ~</span></div>
+                <div class="ub-term"><span class="p">raman@ubuntu</span><span class="c">:~$</span> <span class="o">uname -m</span>
+aarch64
+<span class="p">raman@ubuntu</span><span class="c">:~$</span> <span class="o">systemd-analyze</span>
+<span class="cy">Startup finished in 1.842s (firmware) + 611ms (loader)</span>
+<span class="cy">                + 2.104s (kernel) + 3.221s (userspace) = 7.778s</span>
+<span class="p">raman@ubuntu</span><span class="c">:~$</span> <span class="cursor"></span></div>
+              </div>
+            </div>
+
+            <div class="console-bar">
+              <button class="cb" title="Shut down, force off, restart"><svg class="ic"><use href="#i-power"/></svg></button>
+              <button class="cb" title="Pause"><svg class="ic"><use href="#i-pause"/></svg></button>
+              <span class="cb-sep"></span>
+              <button class="cb" title="Send Control-Alt-Delete"><svg class="ic"><use href="#i-keyboard"/></svg></button>
+              <span class="cb-sep"></span>
+              <button class="cb" title="Scale to fit"><svg class="ic"><use href="#i-expand"/></svg></button>
+              <button class="cb" title="Screenshot"><svg class="ic"><use href="#i-camera"/></svg></button>
+              <button class="cb" title="Open in a separate window"><svg class="ic"><use href="#i-ext"/></svg></button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ CONSOLE — external window (QEMU) ============ -->
+        <section class="detail-screen console-screen" data-screen="external">
+          <header class="console-head">
+            <div class="avatar sm guest-win"><svg class="ic"><use href="#i-win"/></svg></div>
+            <span class="name">Windows 11</span>
+            <div class="pill running"><span class="pdot"></span>Running</div>
+            <span class="chip">QEMU</span>
+            <div class="spacer"></div>
+            <button class="btn">Shut Down <svg class="ic" style="width:12px;height:12px"><use href="#i-chevron-down"/></svg></button>
+            <button class="btn icon" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
+          </header>
+
+          <div class="external-wrap">
+            <div class="ext-card">
+              <div class="ext-icon"><svg class="ic-xl"><use href="#i-monitor"/></svg></div>
+              <h2>QEMU is showing this machine in its own window</h2>
+              <p>The guest console is drawn by the engine's own window, not inside Macport. The machine is running normally.</p>
+              <div class="ext-actions">
+                <button class="btn primary">Bring to Front</button>
+                <button class="btn" disabled>Embed console</button>
+              </div>
+              <div class="ext-note">Embedding needs console capture, which this engine does not provide yet.</div>
+            </div>
+            <div class="ext-caption">QEMU 11.1.2 · display cocoa, zoom-to-fit · 800×600 guest</div>
+          </div>
+        </section>
+
+        <!-- ============ LIBRARY ============ -->
+        <section class="detail-screen" data-screen="library">
+          <div class="lib-head"><h2>All machines</h2><div class="sub">3 machines · 1 running</div></div>
+          <table class="table">
+            <thead>
+              <tr><th>Name</th><th>Guest</th><th>Engine</th><th>State</th><th>Memory</th><th>Disk used</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="cell-name"><span class="dot off"></span><div class="avatar sm guest-win"><svg class="ic"><use href="#i-win"/></svg></div><span class="n">Windows 11</span></div></td>
+                <td>Windows 11 (Arm)</td><td><span class="chip">QEMU</span></td><td><div class="pill off">Off</div></td><td>6 GB</td><td>12.4 GB</td>
+              </tr>
+              <tr>
+                <td><div class="cell-name"><span class="dot on"></span><div class="avatar sm guest-linux"><svg class="ic"><use href="#i-term"/></svg></div><span class="n">Ubuntu Test</span></div></td>
+                <td>Linux (ARM64)</td><td><span class="chip">VZ</span></td><td><div class="pill running"><span class="pdot"></span>Running</div></td><td>4 GB</td><td>7.2 GB</td>
+              </tr>
+              <tr>
+                <td><div class="cell-name"><span class="dot off"></span><div class="avatar sm guest-macos"><svg class="ic"><use href="#i-monitor"/></svg></div><span class="n">macOS Test</span></div></td>
+                <td>macOS</td><td><span class="chip">VZ</span></td><td><div class="pill off">Off</div></td><td>8 GB</td><td>41.0 GB</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="hint"><svg class="ic"><use href="#i-info"/></svg><span>Each machine is a self-contained bundle. Move one to another Mac and it opens there unchanged.</span></div>
+        </section>
+
+        <!-- ============ FIRST RUN ============ -->
+        <section class="detail-screen firstrun" data-screen="firstrun">
+          <div class="firstrun-inner">
+            <div class="dropzone">
+              <svg class="ic-xl"><use href="#i-download"/></svg>
+              <div class="dz-title">Drop an ISO to get started</div>
+              <div class="dz-sub">or <button class="link">Choose File…</button></div>
+            </div>
+            <p class="lede">Macport runs ARM64 Linux and Windows 11 on Arm at native CPU speed. A machine is one folder — disk, firmware and configuration together.</p>
+            <button class="btn">Create a machine from scratch</button>
+            <div class="hint" style="justify-content:center">Windows machines need the QEMU runtime — Macport installs it for you (167 MB).</div>
+          </div>
+        </section>
+      </section>
+    </div>
+
+    <div class="scrim"></div>
+
+    <!-- ============ CREATE — STEP 1 ============ -->
+    <div class="sheet" data-sheet="create1" style="width:760px;height:604px">
+      <div class="sheet-head">
+        <div class="sheet-title">New Machine</div>
+        <div class="spacer"></div>
+        <button class="btn icon ghost" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="steps">
+        <div class="step current"><span class="num">1</span>Guest</div>
+        <div class="step-line"></div>
+        <div class="step"><span class="num">2</span>Install source</div>
+        <div class="step-line"></div>
+        <div class="step"><span class="num">3</span>Resources</div>
+        <div class="step-line"></div>
+        <div class="step"><span class="num">4</span>Review</div>
+      </div>
+      <div class="sheet-body">
+        <div class="hint" style="margin:0 0 14px">Choose what this machine will run. Macport picks the engine that can actually boot it.</div>
+        <div class="guest-cards">
+          <button class="guest-card">
+            <div class="avatar guest-linux"><svg class="ic-lg"><use href="#i-term"/></svg></div>
+            <div class="gc-name">Linux (ARM64)</div>
+            <div class="gc-desc">Native speed. The best-supported path on Apple silicon — every device works.</div>
+            <div class="gc-foot"><span class="chip">VZ</span><span class="sel-dot"></span></div>
+          </button>
+          <button class="guest-card selected">
+            <div class="avatar guest-win"><svg class="ic-lg"><use href="#i-win"/></svg></div>
+            <div class="gc-name">Windows 11 (Arm)</div>
+            <div class="gc-desc">Native CPU speed, x86 apps through Prism. Needs the QEMU runtime.</div>
+            <div class="gc-foot"><span class="chip">QEMU</span><span class="sel-dot"></span></div>
+          </button>
+          <button class="guest-card">
+            <div class="avatar guest-macos"><svg class="ic-lg"><use href="#i-monitor"/></svg></div>
+            <div class="gc-name">macOS</div>
+            <div class="gc-desc">Apple hardware only. Restores from the IPSW of this Mac.</div>
+            <div class="gc-foot"><span class="chip">VZ</span><span class="sel-dot"></span></div>
+          </button>
+        </div>
+        <div class="hint" style="margin-top:16px">
+          <svg class="ic"><use href="#i-info"/></svg>
+          <span>Windows 11 (Arm) runs on QEMU because only an optical device can boot its installer. Virtualization.framework has no CD-ROM.</span>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn">Cancel</button>
+        <div class="flex1"></div>
+        <button class="btn primary">Continue</button>
+      </div>
+    </div>
+
+    <!-- ============ CREATE — STEP 4 (REVIEW) ============ -->
+    <div class="sheet" data-sheet="create4" style="width:760px;height:604px">
+      <div class="sheet-head">
+        <div class="sheet-title">New Machine</div>
+        <div class="spacer"></div>
+        <button class="btn icon ghost" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="steps">
+        <div class="step done"><span class="num">1</span>Guest</div>
+        <div class="step-line"></div>
+        <div class="step done"><span class="num">2</span>Install source</div>
+        <div class="step-line"></div>
+        <div class="step done"><span class="num">3</span>Resources</div>
+        <div class="step-line"></div>
+        <div class="step current"><span class="num">4</span>Review</div>
+      </div>
+      <div class="sheet-body">
+        <div class="review">
+          <div>
+            <div class="kv" style="row-gap:10px">
+              <div class="k">Guest</div><div class="v">Windows 11 (Arm)</div>
+              <div class="k">Engine</div><div class="v">QEMU 11.1.2 <span class="chip" style="margin-left:6px">QEMU</span></div>
+              <div class="k">Processors</div><div class="v">6 cores</div>
+              <div class="k">Memory</div><div class="v">6 GB</div>
+              <div class="k">Disk</div><div class="v">80 GB <span class="muted">sparse</span></div>
+              <div class="k">Network</div><div class="v">Shared (NAT)</div>
+              <div class="k">Install media</div><div class="v mono ellip">Win11_25H2_EnglishInternational_Arm64_v2.iso</div>
+              <div class="k">Location</div><div class="v mono ellip muted">~/Library/Application Support/Macport/VMs</div>
+            </div>
+            <div class="hint" style="margin-top:16px">
+              <svg class="ic"><use href="#i-info"/></svg>
+              <span>Everything lives in one bundle. You can move it, back it up, or open it on another Mac without exporting anything.</span>
+            </div>
+          </div>
+          <aside class="expect">
+            <h3>What to expect</h3>
+            <div class="exp-item"><svg class="ic warn"><use href="#i-warn"/></svg><span>Windows setup asks for a TPM 2.0 device. Macport supplies the setup answer file automatically, so that screen will not stop the install.</span></div>
+            <div class="exp-item"><svg class="ic warn"><use href="#i-warn"/></svg><span>Windows on Arm runs x86 software through Microsoft's Prism translation. Macport cannot make those programs native.</span></div>
+            <div class="exp-item"><svg class="ic ok"><use href="#i-check"/></svg><span>The QEMU runtime is ready. The machine starts with the install media already attached.</span></div>
+          </aside>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn">Back</button>
+        <div class="flex1"></div>
+        <button class="btn primary">Create &amp; Start</button>
+      </div>
+    </div>
+    <!-- ============ RUNTIME PANEL ============ -->
+    <div class="sheet" data-sheet="runtime" style="width:584px;height:544px">
+      <div class="sheet-head">
+        <div class="sheet-title">QEMU runtime</div>
+        <div class="spacer"></div>
+        <button class="btn icon ghost" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div style="display:flex;align-items:center;gap:9px;padding:2px 0 2px">
+          <span class="dot on" style="width:8px;height:8px"></span>
+          <div style="font-size:13px;font-weight:600;color:var(--text-primary)">QEMU <span class="mono" style="font-weight:400">11.1.2</span> · Ready</div>
+          <div class="spacer" style="flex:1"></div>
+          <div style="font-size:11.5px;color:var(--text-tertiary)">167 MB</div>
+        </div>
+        <div class="kv" style="margin-top:14px;grid-template-columns:84px 1fr">
+          <div class="k">Location</div><div class="v mono">~/Library/Application Support/Macport/Runtime/QEMU</div>
+          <div class="k">Contents</div><div class="v">2 executables · 28 libraries · 61 data files</div>
+          <div class="k">Signature</div><div class="v">ad-hoc · com.apple.security.hypervisor</div>
+          <div class="k">Source</div><div class="v">Vendored by Macport</div>
+        </div>
+        <div class="card-divider" style="margin:16px 0 13px"></div>
+        <div class="hint" style="margin:0">
+          <svg class="ic"><use href="#i-info"/></svg>
+          <span>Macport installs and manages this runtime itself. Nothing is installed system-wide, and you do not need Homebrew or any package manager.</span>
+        </div>
+        <div class="row-actions" style="margin-top:14px">
+          <button class="btn primary">Verify</button>
+          <button class="btn">Reinstall…</button>
+          <button class="btn">Reveal in Finder</button>
+        </div>
+        <div style="margin:16px 0 6px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);font-weight:650">Last install</div>
+        <div class="log"><span class="t">21:14:02</span> <span class="ok">●</span> copying qemu-system-aarch64 — ok
+<span class="t">21:14:19</span> <span class="ok">●</span> copying 28 libraries — ok
+<span class="t">21:14:26</span> <span class="ok">●</span> copying 61 data files — ok
+<span class="t">21:14:41</span> <span class="ok">●</span> embedding entitlements — ok
+<span class="t">21:14:43</span> <span class="ok">●</span> re-signing ad-hoc — ok
+<span class="t">21:14:44</span> <span class="ok">●</span> done in 42s</div>
+      </div>
+      <div class="sheet-foot">
+        <div class="flex1"></div>
+        <button class="btn">Done</button>
+      </div>
+    </div>
+
+    <!-- ============ PROBLEM SHEET ============ -->
+    <div class="sheet" data-sheet="problem" style="width:624px;height:556px">
+      <div class="sheet-head">
+        <div class="sheet-title">Setup did not find bootable media</div>
+        <div class="spacer"></div>
+        <button class="btn icon ghost" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="hint" style="margin:0;color:var(--state-error)">
+          <svg class="ic" style="color:var(--state-error)"><use href="#i-warn"/></svg>
+          <span>Firmware started and read the attached image, but no boot option was created. The machine stopped before the guest could run.</span>
+        </div>
+        <div class="card-title" style="margin:16px 0 6px">What happened</div>
+        <p class="lede">ArmVirtQemu read the El Torito image from the USB CD-ROM but did not publish a boot option for it, so the firmware fell through to the next device and stopped.</p>
+        <div class="card-title" style="margin:16px 0 6px">What to try</div>
+        <ol class="lede" style="margin:0;padding-left:17px">
+          <li>Confirm the attached file is an optical image. A Windows ISO always is.</li>
+          <li>Eject and re-attach the media from the dashboard.</li>
+          <li>If it repeats, copy the details and send them with the log.</li>
+        </ol>
+        <div style="margin:16px 0 6px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);font-weight:650">Console log</div>
+        <div class="log"><span class="t">21:03:58</span> <span class="ok">●</span> BdsDxe: loading Boot0001 "UEFI QEMU QEMU USB HARDDRIVE 1-0000:00:01.0-3"
+<span class="t">21:03:58</span> <span class="ok">●</span> BdsDxe: starting Boot0001 "UEFI QEMU QEMU USB HARDDRIVE 1-0000:00:01.0-3"
+<span class="t">21:04:02</span> <span class="warn">▲</span> ArmVirtQemu: no boot option for VenMedia(C5BD4D42-1A76-4996-8956-73CDA326CD0A)
+<span class="t">21:04:12</span> <span class="err">✕</span> guest stopped: no bootable media</div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn"><svg class="ic" style="width:13px;height:13px"><use href="#i-copy"/></svg>Copy details</button>
+        <div class="flex1"></div>
+        <button class="btn primary">Try again</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var body = document.body;
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var details = Array.prototype.slice.call(document.querySelectorAll('.detail-screen'));
+  var sheets = Array.prototype.slice.call(document.querySelectorAll('.sheet'));
+  var scrim = document.querySelector('.scrim');
+  var sheetHosts = { create1:'dashboard', create4:'dashboard', runtime:'dashboard', problem:'dashboard' };
+
+  function show(screen){
+    body.dataset.screen = screen;
+    tabs.forEach(function(t){ t.classList.toggle('active', t.dataset.screen === screen); });
+    var detail = sheetHosts[screen] || screen;
+    details.forEach(function(d){ d.classList.toggle('active', d.dataset.screen === detail); });
+    var isSheet = Object.prototype.hasOwnProperty.call(sheetHosts, screen);
+    sheets.forEach(function(s){ s.classList.toggle('active', s.dataset.sheet === screen); });
+    scrim.classList.toggle('active', isSheet);
+  }
+
+  tabs.forEach(function(t){
+    t.addEventListener('click', function(){ show(t.dataset.screen); });
+  });
+
+  var light = document.getElementById('theme-light');
+  var dark = document.getElementById('theme-dark');
+  function theme(t){
+    document.documentElement.dataset.theme = t;
+    light.classList.toggle('on', t === 'light');
+    dark.classList.toggle('on', t === 'dark');
+  }
+  light.addEventListener('click', function(){ theme('light'); });
+  dark.addEventListener('click', function(){ theme('dark'); });
+
+  var win = document.querySelector('.window');
+  var stage = document.querySelector('.stage');
+  function fit(){
+    var avail = document.documentElement.clientWidth - 48;
+    var k = Math.min(1, avail / 1280);
+    win.style.transform = 'scale(' + k + ')';
+    stage.style.height = (800 * k + 22) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  var order = tabs.map(function(t){ return t.dataset.screen; });
+  window.addEventListener('keydown', function(e){
+    if (e.target.closest && e.target.closest('button, input, textarea')) return;
+    var n = parseInt(e.key, 10);
+    if (n >= 1 && n <= order.length) show(order[n - 1]);
+    if (e.key === 'd' || e.key === 'D') {
+      theme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Local-development entitlements. MINIMAL BY DESIGN.
+
+	  `Macport.entitlements` is the shipping set and includes
+	  com.apple.vm.networking and com.apple.vm.device-access. Those are
+	  *restricted* entitlements: codesign will refuse them without an
+	  Apple-issued provisioning profile that grants them, which a developer
+	  machine does not have. Signing a debug build against the shipping set
+	  therefore fails, and the failure looks like a signing bug rather than a
+	  missing profile.
+
+	  This file carries only what a locally signed build can actually be granted.
+	  Virtualization.framework needs exactly one entitlement, and nothing here is
+	  guessed at — the key is verified present in both UTM's and Parallels'
+	  shipping signatures.
+
+	  Consequence for local builds: NAT networking only, no USB passthrough. That
+	  is the same limitation as the shipping build today, for a different reason.
+	-->
+
+	<!-- Required to create and run virtual machines. -->
+	<key>com.apple.security.virtualization</key>
+	<true/>
+
+	<!-- Unrestricted standard entitlements; needed for the guest-agent control
+	     channel and for the CLI to reach the VM store over sockets. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

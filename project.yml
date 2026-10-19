@@ -1,0 +1,82 @@
+name: Macport
+options:
+  bundleIdPrefix: com.dakshraman
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  SWIFT_VERSION: "6.0"
+  MARKETING_VERSION: "0.1.0"
+  CURRENT_PROJECT_VERSION: "1"
+  SWIFT_STRICT_CONCURRENCY: complete
+  DEAD_CODE_STRIPPING: YES
+
+targets:
+  # Shared library: the VM model, the bundle format and the engine protocol.
+  # Both the app and the CLI link this, so a VM started from the command line is
+  # the same machine the UI sees — not a re-implementation that can drift.
+  MacportKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: MacportKit
+    # A framework target needs its own Info.plist or the app cannot embed it.
+    # Kept outside the sources directory so it is never treated as a resource.
+    info:
+      path: Support/MacportKit-Info.plist
+      properties:
+        CFBundleName: MacportKit
+        CFBundleDisplayName: MacportKit
+        CFBundlePackageType: FMWK
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macportkit
+      PRODUCT_NAME: MacportKit
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      CODE_SIGN_STYLE: Automatic
+      DEFINES_MODULE: YES
+      SKIP_INSTALL: YES
+      # Static, not dynamic. MacportKit is the shared model and engine protocol;
+      # a CLI tool has nowhere to embed a dylib, and neither binary benefits from
+      # loading core model code at runtime.
+      MACH_O_TYPE: staticlib
+
+  Macport:
+    type: application
+    platform: macOS
+    sources:
+      - path: Macport/App
+      - path: Macport/Views
+      - path: Macport/Resources
+    dependencies:
+      - target: MacportKit
+        embed: false
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macport
+      PRODUCT_NAME: Macport
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      INFOPLIST_FILE: Macport/Resources/Info.plist
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: Macport/Resources/Macport.entitlements
+      ENABLE_HARDENED_RUNTIME: YES
+      COMBINE_HIDPI_IMAGES: YES
+      # Sandbox is deliberately off in v1 — see Macport.entitlements for why and
+      # what must happen before release.
+      ENABLE_APP_SANDBOX: NO
+
+  MacportCtl:
+    type: tool
+    platform: macOS
+    sources:
+      - path: MacportCtl
+    dependencies:
+      - target: MacportKit
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macportctl
+      PRODUCT_NAME: macportctl
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: MacportCtl/MacportCtl.entitlements
