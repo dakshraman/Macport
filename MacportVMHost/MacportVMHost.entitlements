@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Entitlements for MacportVMHost — the per-VM process that owns QEMU.
+
+	  QEMU's `-accel hvf` drives Hypervisor.framework. The host also starts a
+	  JIT-capable child, so it carries the JIT allowance alongside the hypervisor
+	  grant rather than leaving the child to fail at first translation.
+	-->
+	<key>com.apple.security.hypervisor</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>
