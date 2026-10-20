@@ -381,7 +381,7 @@ struct ControlCenterVMCard: View {
     private var guestWallpaperBackground: some View {
         Group {
             switch config.guest {
-            case .windowsARM:
+            case .windowsARM, .windowsApp:
                 LinearGradient(
                     colors: [Color(red: 0.05, green: 0.15, blue: 0.35), Color(red: 0.10, green: 0.35, blue: 0.65)],
                     startPoint: .topLeading,
@@ -408,6 +408,11 @@ struct ControlCenterVMCard: View {
             switch config.guest {
             case .windowsARM:
                 Image(systemName: "square.grid.2x2.fill")
+                    .font(.system(size: 38))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .shadow(color: .black.opacity(0.4), radius: 6)
+            case .windowsApp:
+                Image(systemName: "macwindow")
                     .font(.system(size: 38))
                     .foregroundStyle(Color.white.opacity(0.85))
                     .shadow(color: .black.opacity(0.4), radius: 6)

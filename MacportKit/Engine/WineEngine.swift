@@ -140,7 +140,9 @@ public final class WineEngine: VMEngine {
 
             // Determine target executable to run
             let targetArgs: [String]
-            switch config.bootSource {
+            switch config.boot {
+            case .installMedia(let path):
+                targetArgs = [path]
             case .kernelImage(let kernel, let commandLine):
                 let cmdArgs = commandLine.isEmpty ? [] : commandLine.components(separatedBy: .whitespaces)
                 targetArgs = [kernel] + cmdArgs

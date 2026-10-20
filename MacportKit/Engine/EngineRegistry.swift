@@ -10,7 +10,7 @@ import Foundation
 public enum EngineRegistry {
     /// Every engine Macport ships, in order of preference for an ordinary guest.
     nonisolated public static var all: [any VMEngine.Type] {
-        [VZEngine.self, QEMUEngine.self]
+        [VZEngine.self, QEMUEngine.self, WineEngine.self]
     }
 
     /// A plain description of an engine, for lists in the UI and the CLI.
@@ -46,6 +46,10 @@ public enum EngineRegistry {
 
     /// Choose on the guest's hard requirements first, and only then on speed.
     nonisolated public static func preferredType(for guest: GuestKind) -> any VMEngine.Type {
+        if guest == .windowsApp {
+            if isAvailable(WineEngine.self) { return WineEngine.self }
+        }
+
         // A guest that needs a device Apple's framework does not have must go to
         // the engine that has it. Only fall back if that engine is not usable here.
         if guest.requiresOpticalBootMedia {
@@ -80,6 +84,9 @@ public enum EngineRegistry {
     /// their Windows machine is not using the fast engine.
     nonisolated public static func rationale(for config: VMConfiguration) -> String? {
         guard config.engineIdentifier == nil else { return nil }
+        if config.guest == .windowsApp {
+            return "Windows applications run through the Wine translation layer directly on the metal without virtual machine overhead."
+        }
         if config.guest.requiresOpticalBootMedia {
             return "\(config.guest.displayName) installs from vendor media that must be "
                 + "booted as an optical disc, so it runs on \(QEMUEngine.displayName) "

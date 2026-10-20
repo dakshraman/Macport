@@ -14,7 +14,7 @@ struct GuestAvatar: View {
     private var hue: Color {
         switch guest {
         case .linuxARM: return .macportLinuxHue
-        case .windowsARM: return .macportWindowsHue
+        case .windowsARM, .windowsApp: return .macportWindowsHue
         case .macOSGuest: return .macportMacOSHue
         }
     }
@@ -23,6 +23,7 @@ struct GuestAvatar: View {
         switch guest {
         case .linuxARM: return "terminal"
         case .windowsARM: return "square.grid.2x2"
+        case .windowsApp: return "macwindow"
         case .macOSGuest: return "apple.logo"
         }
     }
