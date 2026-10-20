@@ -124,7 +124,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
     public func sendClipboardText(_ text: String) {
         inputQueue.async { [weak self] in
             guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
-            guard let data = text.data(using: .latin1) ?? text.data(using: .utf8) else { return }
+            guard let data = text.data(using: .isoLatin1) ?? text.data(using: .utf8) else { return }
             var msg = [UInt8](repeating: 0, count: 8)
             msg[0] = 6 // ClientCutText
             msg[1] = 0; msg[2] = 0; msg[3] = 0 // padding
@@ -309,7 +309,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
     // MARK: - Frame Updates
 
     private func handleFramebufferUpdate() throws {
-        _ = try readByte() // padding
+        _ = readByte() // padding
         let numRectsBytes = try readExact(count: 2)
         let numRects = Int(UInt16(numRectsBytes[0]) << 8 | UInt16(numRectsBytes[1]))
 
@@ -384,7 +384,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
     }
 
     private func skipColourMapEntries() throws {
-        _ = try readByte()
+        _ = readByte()
         _ = try readExact(count: 2) // first colour
         let nColoursBytes = try readExact(count: 2)
         let nColours = Int(UInt16(nColoursBytes[0]) << 8 | UInt16(nColoursBytes[1]))

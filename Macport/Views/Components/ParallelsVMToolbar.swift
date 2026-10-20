@@ -9,6 +9,7 @@ struct ParallelsVMToolbar: View {
     @EnvironmentObject private var store: VMStore
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var ui: UIParityState
+    @Environment(\.openWindow) private var openWindow
 
     let config: VMConfiguration
 
@@ -36,6 +37,22 @@ struct ParallelsVMToolbar: View {
             }
             .buttonStyle(.plain)
             .help("Back to Control Center Gallery")
+
+            Button {
+                openWindow(value: config.id)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "macwindow.on.rectangle")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Dedicated Window")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.macportAccent.opacity(0.15)))
+            }
+            .buttonStyle(.plain)
+            .help("Pop this virtual machine out into its own dedicated window")
 
             Divider()
                 .frame(height: 20)

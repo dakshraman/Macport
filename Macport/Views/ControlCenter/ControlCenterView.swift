@@ -444,6 +444,22 @@ struct ControlCenterVMCard: View {
                     .help(vmState == .paused ? "Resume machine" : "Pause machine")
 
                     Button {
+                        openWindow(value: config.id)
+                    } label: {
+                        Circle()
+                            .fill(Color.macportAccent)
+                            .frame(width: 48, height: 48)
+                            .shadow(color: Color.macportAccent.opacity(0.4), radius: 8, y: 3)
+                            .overlay(
+                                Image(systemName: "macwindow.on.rectangle")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(.white)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open VM Window")
+
+                    Button {
                         Task { await state.stop(id: config.id, graceful: true) }
                     } label: {
                         Circle()
@@ -460,6 +476,7 @@ struct ControlCenterVMCard: View {
                 } else {
                     Button {
                         state.start(config, in: store)
+                        openWindow(value: config.id)
                     } label: {
                         Circle()
                             .fill(Color.macportRunning)
@@ -473,7 +490,7 @@ struct ControlCenterVMCard: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Start machine")
+                    .help("Start machine and open window")
                 }
             }
 
@@ -536,6 +553,21 @@ struct ControlCenterVMCard: View {
 
             Spacer()
 
+            Button {
+                if !vmState.isActive {
+                    state.start(config, in: store)
+                }
+                openWindow(value: config.id)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "macwindow.on.rectangle")
+                    Text("Open")
+                }
+                .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
             Menu {
                 cardContextMenu
             } label: {
@@ -555,6 +587,15 @@ struct ControlCenterVMCard: View {
 
     @ViewBuilder
     private var cardContextMenu: some View {
+        Button("Open in Window") {
+            if !vmState.isActive {
+                state.start(config, in: store)
+            }
+            openWindow(value: config.id)
+        }
+
+        Divider()
+
         if vmState.isActive {
             Button("Shut Down") {
                 Task { await state.stop(id: config.id, graceful: true) }
@@ -579,7 +620,7 @@ struct ControlCenterVMCard: View {
 
         Divider()
 
-        Button("Open Machine") {
+        Button("Inspect Details") {
             ui.selection = config.id
             ui.viewMode = .split
         }
