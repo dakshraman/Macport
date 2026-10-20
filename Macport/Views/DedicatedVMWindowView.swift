@@ -37,7 +37,7 @@ struct DedicatedVMWindowView: View {
                     VMDisplayView(machine: machine)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
-                    EmbeddedVNCDisplayView(socketPath: vncPath)
+                    EmbeddedVNCDisplayView(socketPath: vncPath, externalScalingMode: $scalingMode)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     stoppedStatePlaceholder
@@ -58,18 +58,44 @@ struct DedicatedVMWindowView: View {
     // MARK: - Toolbar
 
     private var windowToolbar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // Back to Control Center Gallery
+            Button {
+                if let window = NSApp.windows.first(where: {
+                    $0.identifier?.rawValue.contains("main") == true ||
+                    $0.title.contains("Control Center") ||
+                    $0.title == "Macport"
+                }) {
+                    window.makeKeyAndOrderFront(nil)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Control Center")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .help("Bring Parallels Control Center to front (⌘0)")
+
+            Divider()
+                .frame(height: 18)
+
             // Machine Avatar & Identity
             GuestAvatar(guest: config.guest, size: 28)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(config.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     Text(config.guest.displayName)
                     Text("·")
-                    Text(engineType.displayName)
+                    Text("Macport Hypervisor")
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -90,22 +116,53 @@ struct DedicatedVMWindowView: View {
 
             Spacer()
 
-            // Quick Sizing & Window Snapping
+            // Display Scaling (Fit / Stretch / 1:1) & Snap
             HStack(spacing: 4) {
+                Picker("Scaling", selection: $scalingMode) {
+                    Text("Fit").tag(DisplayScalingMode.aspectFit)
+                    Text("Stretch").tag(DisplayScalingMode.fill)
+                    Text("1:1").tag(DisplayScalingMode.center)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+                .help("Display Scaling: Fit aspect ratio, Stretch to eliminate borders, or 1:1 Native")
+
                 Button {
                     snapWindowToGuestResolution()
                 } label: {
-                    Label("Snap Window", systemImage: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
+                    Label("Snap", systemImage: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
                         .font(.system(size: 11))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help("Snap window size to guest resolution (⌘1)")
+                .help("Snap window size directly to guest resolution (⌘1)")
                 .keyboardShortcut("1", modifiers: .command)
             }
 
             Divider()
                 .frame(height: 18)
+
+            // Quick Keys
+            if vmState.isActive {
+                Button {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "keyboard")
+                            .font(.system(size: 10))
+                        Text("Ctrl+Alt+Del")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("Send Ctrl+Alt+Del")
+
+                Divider()
+                    .frame(height: 18)
+            }
 
             // Power Actions
             if vmState.isActive {

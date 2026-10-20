@@ -11,11 +11,16 @@ import MacportKit
 @MainActor
 struct EmbeddedVNCDisplayView: View {
     let socketPath: String
+    var externalScalingMode: Binding<DisplayScalingMode>? = nil
 
     @State private var isConnected = false
     @State private var guestSize: CGSize = .zero
     @State private var client: RFBDisplayClient?
-    @State private var scalingMode: DisplayScalingMode = .aspectFit
+    @State private var internalScalingMode: DisplayScalingMode = .aspectFit
+
+    private var currentScalingMode: Binding<DisplayScalingMode> {
+        externalScalingMode ?? $internalScalingMode
+    }
 
     var body: some View {
         ZStack {
@@ -26,7 +31,7 @@ struct EmbeddedVNCDisplayView: View {
                 isConnected: $isConnected,
                 guestSize: $guestSize,
                 clientHolder: $client,
-                scalingMode: $scalingMode
+                scalingMode: currentScalingMode
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -75,17 +80,17 @@ struct EmbeddedVNCDisplayView: View {
 
                         // Scaling Mode Toggle (Fit vs Stretch)
                         Button {
-                            scalingMode = scalingMode == .aspectFit ? .fill : .aspectFit
+                            currentScalingMode.wrappedValue = currentScalingMode.wrappedValue == .aspectFit ? .fill : .aspectFit
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: scalingMode == .aspectFit ? "aspectratio" : "arrow.up.left.and.down.right.magnifyingglass")
+                                Image(systemName: currentScalingMode.wrappedValue == .aspectFit ? "aspectratio" : "arrow.up.left.and.down.right.magnifyingglass")
                                     .font(.system(size: 10))
-                                Text(scalingMode == .aspectFit ? "Fit" : "Stretch")
+                                Text(currentScalingMode.wrappedValue == .aspectFit ? "Fit" : "Stretch")
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(scalingMode == .fill ? Color.macportAccent.opacity(0.6) : Color.white.opacity(0.15)))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(currentScalingMode.wrappedValue == .fill ? Color.macportAccent.opacity(0.6) : Color.white.opacity(0.15)))
                             .foregroundStyle(.white)
                         }
                         .buttonStyle(.plain)
@@ -307,6 +312,7 @@ private final class VNCView: NSView {
     private var trackingAreaRef: NSTrackingArea?
     private var previousModifiers: NSEvent.ModifierFlags = []
 
+    override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
 
@@ -332,6 +338,14 @@ private final class VNCView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MacportSendCtrlAltDel"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.client?.sendCtrlAltDel()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -359,18 +373,16 @@ private final class VNCView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-
-        ctx.setFillColor(NSColor.black.cgColor)
-        ctx.fill(bounds)
+        NSColor.black.setFill()
+        bounds.fill()
 
         guard let image = currentImage else { return }
 
         let imageSize = CGSize(width: image.width, height: image.height)
         let rect = aspectFitRect(for: imageSize, in: bounds)
 
-        ctx.interpolationQuality = .high
-        ctx.draw(image, in: rect)
+        let nsImage = NSImage(cgImage: image, size: imageSize)
+        nsImage.draw(in: rect, from: .zero, operation: .copy, fraction: 1.0)
     }
 
     private func aspectFitRect(for size: CGSize, in container: CGRect) -> CGRect {
@@ -395,18 +407,18 @@ private final class VNCView: NSView {
     // MARK: - Mouse Input Mapping
 
     private func guestCoordinates(from viewPoint: NSPoint) -> (x: Int, y: Int)? {
-        guard let image = currentImage else { return nil }
+        guard let image = currentImage, image.width > 0, image.height > 0 else { return nil }
         let imageSize = CGSize(width: image.width, height: image.height)
         let fitRect = aspectFitRect(for: imageSize, in: bounds)
 
-        guard fitRect.contains(viewPoint) else { return nil }
+        guard fitRect.width > 0, fitRect.height > 0 else { return nil }
 
-        let normalizedX = (viewPoint.x - fitRect.origin.x) / fitRect.width
-        // Flip Y for top-down guest coordinate system
-        let normalizedY = 1.0 - ((viewPoint.y - fitRect.origin.y) / fitRect.height)
+        // Since isFlipped is true, viewPoint.y = 0 is at the top, matching guest coordinates!
+        let normalizedX = max(0.0, min(1.0, (viewPoint.x - fitRect.origin.x) / fitRect.width))
+        let normalizedY = max(0.0, min(1.0, (viewPoint.y - fitRect.origin.y) / fitRect.height))
 
-        let guestX = Int(normalizedX * CGFloat(image.width))
-        let guestY = Int(normalizedY * CGFloat(image.height))
+        let guestX = Int(normalizedX * CGFloat(image.width - 1))
+        let guestY = Int(normalizedY * CGFloat(image.height - 1))
 
         return (
             x: max(0, min(image.width - 1, guestX)),
