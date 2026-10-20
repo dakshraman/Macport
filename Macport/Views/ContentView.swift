@@ -47,10 +47,20 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $state.isPresentingCreateSheet) {
-            VMCreateView { config in
-                state.create(config, in: store)
-                ui.selection = config.id
-            }
+            VMCreateView(
+                onCreate: { config in
+                    state.create(config, in: store)
+                    ui.selection = config.id
+                },
+                onCreateAndStart: { config in
+                    state.create(config, in: store)
+                    ui.selection = config.id
+                    Task {
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        state.start(config, in: store)
+                    }
+                }
+            )
         }
         .sheet(isPresented: $ui.isPresentingImport) {
             ImportWizardSheet(store: store, state: state) { config in

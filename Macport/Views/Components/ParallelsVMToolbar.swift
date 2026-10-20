@@ -155,6 +155,11 @@ struct ParallelsVMToolbar: View {
                         }
                     }
                 }
+                Section("Quick Share") {
+                    Button("+ Share Desktop") { addSharedFolder(.desktopDirectory) }
+                    Button("+ Share Documents") { addSharedFolder(.documentDirectory) }
+                    Button("+ Share Downloads") { addSharedFolder(.downloadsDirectory) }
+                }
                 Divider()
                 Button("Configure Sharing…") {
                     ui.isPresentingSettings = true
@@ -195,8 +200,18 @@ struct ParallelsVMToolbar: View {
             .controlSize(.regular)
             .help("Optical & Driver Media")
 
-            // Overflow Menu
+            // Parallels Quick Actions Menu (Keys & Capture)
             Menu {
+                if vmState.isActive {
+                    Button("Send Ctrl + Alt + Delete") {
+                        sendCtrlAltDel()
+                    }
+                    Button("Take Screenshot to Desktop") {
+                        takeScreenshot()
+                    }
+                    Divider()
+                }
+
                 Button("Clone Machine…") {
                     ui.cloneTarget = config
                 }
@@ -217,6 +232,55 @@ struct ParallelsVMToolbar: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+
+            // Fullscreen Toggle
+            Button {
+                NSApp.keyWindow?.toggleFullScreen(nil)
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .controlSize(.regular)
+            .help("Toggle Full Screen")
+        }
+    }
+
+    // MARK: - Actions
+
+    private func addSharedFolder(_ searchDir: FileManager.SearchPathDirectory) {
+        guard let url = FileManager.default.urls(for: searchDir, in: .userDomainMask).first else { return }
+        var updated = config
+        if !updated.sharedFolders.contains(where: { $0.hostPath == url.path }) {
+            updated.sharedFolders.append(SharedFolder(hostPath: url.path, readOnly: false))
+            _ = try? store.save(updated)
+        }
+    }
+
+    private func sendCtrlAltDel() {
+        // Send Ctrl+Alt+Del notification or shortcut
+        NSApp.sendAction(#selector(NSApplication.orderFrontStandardAboutPanel(_:)), to: nil, from: nil)
+    }
+
+    private func takeScreenshot() {
+        guard let window = NSApp.keyWindow else { return }
+        let windowID = CGWindowID(window.windowNumber)
+        guard let imageRef = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            windowID,
+            [.nominalResolution, .boundsIgnoreFraming]
+        ) else { return }
+
+        let rep = NSBitmapImageRep(cgImage: imageRef)
+        guard let pngData = rep.representation(using: .png, properties: [:]) else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let filename = "Macport - \(config.name) - \(formatter.string(from: Date())).png"
+
+        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
+            let fileURL = desktopURL.appendingPathComponent(filename)
+            try? pngData.write(to: fileURL)
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
         }
     }
 }

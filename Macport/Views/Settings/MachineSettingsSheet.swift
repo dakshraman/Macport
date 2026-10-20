@@ -246,8 +246,30 @@ struct MachineSettingsSheet: View {
                                 }
                             }
                         }
-                        Button("Add Folder…") { addFolder() }
-                            .controlSize(.small)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Quick Presets")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 8) {
+                                Button("+ Desktop") { addPresetFolder(.desktopDirectory) }
+                                    .controlSize(.small)
+                                    .disabled(isSharedPreset(.desktopDirectory))
+
+                                Button("+ Documents") { addPresetFolder(.documentDirectory) }
+                                    .controlSize(.small)
+                                    .disabled(isSharedPreset(.documentDirectory))
+
+                                Button("+ Downloads") { addPresetFolder(.downloadsDirectory) }
+                                    .controlSize(.small)
+                                    .disabled(isSharedPreset(.downloadsDirectory))
+
+                                Button("+ Choose Other…") { addFolder() }
+                                    .controlSize(.small)
+                            }
+                        }
+                        .padding(.top, 4)
                     } else {
                         HStack {
                             Text("Shared folders")
@@ -396,8 +418,20 @@ struct MachineSettingsSheet: View {
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
             if !draft.sharedFolders.contains(where: { $0.hostPath == url.path }) {
-                draft.sharedFolders.append(SharedFolder(hostPath: url.path))
+                draft.sharedFolders.append(SharedFolder(hostPath: url.path, readOnly: false))
             }
+        }
+    }
+
+    private func isSharedPreset(_ searchDir: FileManager.SearchPathDirectory) -> Bool {
+        guard let url = FileManager.default.urls(for: searchDir, in: .userDomainMask).first else { return false }
+        return draft.sharedFolders.contains(where: { $0.hostPath == url.path })
+    }
+
+    private func addPresetFolder(_ searchDir: FileManager.SearchPathDirectory) {
+        guard let url = FileManager.default.urls(for: searchDir, in: .userDomainMask).first else { return }
+        if !draft.sharedFolders.contains(where: { $0.hostPath == url.path }) {
+            draft.sharedFolders.append(SharedFolder(hostPath: url.path, readOnly: false))
         }
     }
 
