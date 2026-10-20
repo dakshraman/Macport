@@ -4,10 +4,9 @@ import MacportKit
 
 /// Application entry point.
 ///
-/// Three long-lived objects are injected environment-wide rather than passed
-/// around: the `VMStore` (what VMs exist on disk), `AppState` (what is running
-/// right now), and `UIParityState` (selection and sheet presentation shared by
-/// the window and the menu bar extra). Everything else is derived.
+/// Parallels Desktop signature architecture:
+/// 1. "Control Center" (`⌘0`): The central gallery window managing all VMs.
+/// 2. "Virtual Machine Window": Standalone edge-to-edge dedicated windows for each running VM.
 @main
 struct MacportApp: App {
     @StateObject private var store = VMStore()
@@ -15,26 +14,25 @@ struct MacportApp: App {
     @StateObject private var ui: UIParityState
 
     init() {
-        // `UIParityState` mirrors the same registry `AppState` wraps, so the
-        // menu bar extra and the window can never disagree about what is up.
         let state = AppState()
         _state = StateObject(wrappedValue: state)
         _ui = StateObject(wrappedValue: UIParityState(registry: state.registry))
     }
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // MARK: - Scene 1: Parallels Control Center Window (⌘0)
+        WindowGroup("Control Center", id: "main") {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(state)
                 .environmentObject(ui)
-                .frame(minWidth: 900, minHeight: 560)
+                .frame(minWidth: 880, minHeight: 560)
                 .task {
-                    // Load once at launch. The store is the single source of
-                    // truth for the library, so this is the only trigger needed.
                     store.load()
                 }
         }
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Virtual Machine…") {
@@ -50,11 +48,37 @@ struct MacportApp: App {
                 .keyboardShortcut("i", modifiers: .command)
             }
 
+            CommandGroup(after: .windowArrangement) {
+                Button("Control Center") {
+                    if let window = NSApp.windows.first(where: {
+                        $0.identifier?.rawValue.contains("main") == true ||
+                        $0.title.contains("Control Center") ||
+                        $0.title == "Macport"
+                    }) {
+                        window.makeKeyAndOrderFront(nil)
+                    }
+                }
+                .keyboardShortcut("0", modifiers: .command)
+            }
+
             machineCommands
         }
 
-        // Visible only while something is running. The insertion flag is
-        // derived from the registry, so the setter is intentionally inert.
+        // MARK: - Scene 2: Dedicated Virtual Machine Windows
+        WindowGroup("Virtual Machine", for: UUID.self) { $vmId in
+            if let id = vmId, let config = store.machines.first(where: { $0.id == id }) {
+                DedicatedVMWindowView(config: config)
+                    .environmentObject(store)
+                    .environmentObject(state)
+                    .environmentObject(ui)
+                    .navigationTitle(config.name)
+            }
+        }
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: true))
+        .defaultSize(width: 800, height: 600)
+
+        // MARK: - Menu Bar Extra
         MenuBarExtra(
             "Macport",
             systemImage: "desktopcomputer",
@@ -74,7 +98,7 @@ struct MacportApp: App {
         )
     }
 
-    // MARK: - Machine menu
+    // MARK: - Machine & Actions menu
 
     private var selectedConfiguration: VMConfiguration? {
         guard let id = ui.selection else { return nil }
@@ -94,11 +118,9 @@ struct MacportApp: App {
         selectedConfiguration.flatMap { state.deleteRefusal(for: $0) }
     }
 
-    /// The `Machine` menu. Every item is either actionable for the selected
-    /// machine's current state or disabled — the menu never offers a control the
-    /// registry would refuse.
+    /// The `Actions` & `Machine` menu: full parity with Parallels Desktop Actions menu.
     private var machineCommands: some Commands {
-        CommandMenu("Machine") {
+        CommandMenu("Actions") {
             Button("Start") {
                 guard let config = selectedConfiguration else { return }
                 state.start(config, in: store)
@@ -141,6 +163,11 @@ struct MacportApp: App {
                 )
             }
 
+            Button("Send Ctrl+Alt+Del") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
+            }
+            .disabled(selectedConfiguration == nil || !selectedState.isActive)
+
             Divider()
 
             Button("Show in Finder") {
@@ -152,9 +179,10 @@ struct MacportApp: App {
 
             Divider()
 
-            Button("Machine Settings…") {
+            Button("Configure…") {
                 ui.isPresentingSettings = true
             }
+            .keyboardShortcut(",", modifiers: .command)
             .disabled(selectedConfiguration == nil)
 
             Button("Snapshots…") {

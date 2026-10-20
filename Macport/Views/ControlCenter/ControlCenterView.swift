@@ -278,6 +278,7 @@ struct ControlCenterVMCard: View {
     @EnvironmentObject private var store: VMStore
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var ui: UIParityState
+    @Environment(\.openWindow) private var openWindow
 
     let config: VMConfiguration
 
@@ -295,7 +296,7 @@ struct ControlCenterVMCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(isHovered ? Color.macportAccent.opacity(0.4) : Color.macportBorderSubtle, lineWidth: isHovered ? 1.5 : 1)
+                .stroke(isHovered ? Color.macportAccent.opacity(0.4) : (ui.selection == config.id ? Color.macportAccent : Color.macportBorderSubtle), lineWidth: (isHovered || ui.selection == config.id) ? 1.5 : 1)
         )
         .shadow(color: isHovered ? Color.black.opacity(0.3) : Color.black.opacity(0.12), radius: isHovered ? 12 : 5, y: isHovered ? 6 : 2)
         .onHover { hovering in
@@ -303,9 +304,14 @@ struct ControlCenterVMCard: View {
                 isHovered = hovering
             }
         }
-        .onTapGesture {
+        .onTapGesture(count: 2) {
+            if !vmState.isActive {
+                state.start(config, in: store)
+            }
+            openWindow(value: config.id)
+        }
+        .onTapGesture(count: 1) {
             ui.selection = config.id
-            ui.viewMode = .split
         }
         .contextMenu {
             cardContextMenu
