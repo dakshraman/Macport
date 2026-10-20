@@ -63,7 +63,7 @@ struct EmbeddedVNCDisplayView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "space")
                                 .font(.system(size: 10))
-                            Text("Press Space")
+                            Text("Space")
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .padding(.horizontal, 8)
@@ -72,7 +72,70 @@ struct EmbeddedVNCDisplayView: View {
                         .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
-                    .help("Send Space keypress to boot from CD/DVD")
+                    .help("Send Space keypress")
+
+                    Button {
+                        client?.sendKeyEvent(key: 0xFF09, isDown: true)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            client?.sendKeyEvent(key: 0xFF09, isDown: false)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.right.to.line")
+                                .font(.system(size: 10))
+                            Text("Tab")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send Tab keypress to cycle focus")
+
+                    Button {
+                        client?.sendKeyEvent(key: 0xFF0D, isDown: true)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            client?.sendKeyEvent(key: 0xFF0D, isDown: false)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "return")
+                                .font(.system(size: 10))
+                            Text("Enter")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send Enter / Return keypress")
+
+                    Button {
+                        // Shift + F10 opens Command Prompt in Windows Setup
+                        client?.sendKeyEvent(key: 0xFFE1, isDown: true)
+                        client?.sendKeyEvent(key: 0xFFC7, isDown: true)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            client?.sendKeyEvent(key: 0xFFC7, isDown: false)
+                            client?.sendKeyEvent(key: 0xFFE1, isDown: false)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 10))
+                            Text("Shift+F10")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send Shift+F10 to open Command Prompt / LabConfig in Windows Setup")
 
                     Button {
                         client?.sendCtrlAltDel()
@@ -167,8 +230,28 @@ private final class VNCView: NSView {
     var client: RFBDisplayClient?
     private var currentImage: CGImage?
     private var trackingAreaRef: NSTrackingArea?
+    private var previousModifiers: NSEvent.ModifierFlags = []
 
     override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        return true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.window?.makeFirstResponder(self)
+            }
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -192,7 +275,7 @@ private final class VNCView: NSView {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited],
+            options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -247,60 +330,109 @@ private final class VNCView: NSView {
         )
     }
 
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+    private func sendPointer(with event: NSEvent, buttonMask: UInt8) {
         let pt = convert(event.locationInWindow, from: nil)
         if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 1) // Left click
+            client?.sendPointerEvent(x: gx, y: gy, buttonMask: buttonMask)
         }
     }
 
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        sendPointer(with: event, buttonMask: 1) // Left click
+    }
+
     override func mouseUp(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-        if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 0) // Release
-        }
+        sendPointer(with: event, buttonMask: 0) // Release
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        sendPointer(with: event, buttonMask: 1)
     }
 
     override func rightMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        let pt = convert(event.locationInWindow, from: nil)
-        if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 4) // Right click
-        }
+        sendPointer(with: event, buttonMask: 4) // Right click
     }
 
     override func rightMouseUp(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-        if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 0) // Release
-        }
+        sendPointer(with: event, buttonMask: 0) // Release
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        sendPointer(with: event, buttonMask: 4)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        sendPointer(with: event, buttonMask: 2) // Middle click
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        sendPointer(with: event, buttonMask: 0)
     }
 
     override func mouseMoved(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-        if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 0)
-        }
+        sendPointer(with: event, buttonMask: 0)
     }
 
-    override func mouseDragged(with event: NSEvent) {
+    override func scrollWheel(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
-        if let (gx, gy) = guestCoordinates(from: pt) {
-            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 1)
+        guard let (gx, gy) = guestCoordinates(from: pt) else { return }
+        if event.deltaY > 0 {
+            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 8) // Scroll up
+            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 0)
+        } else if event.deltaY < 0 {
+            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 16) // Scroll down
+            client?.sendPointerEvent(x: gx, y: gy, buttonMask: 0)
         }
     }
 
     // MARK: - Keyboard Input Mapping
 
+    override func flagsChanged(with event: NSEvent) {
+        let current = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        let prev = previousModifiers
+
+        if current.contains(.shift) && !prev.contains(.shift) {
+            client?.sendKeyEvent(key: 0xFFE1, isDown: true) // Shift_L
+        } else if !current.contains(.shift) && prev.contains(.shift) {
+            client?.sendKeyEvent(key: 0xFFE1, isDown: false)
+        }
+
+        if current.contains(.control) && !prev.contains(.control) {
+            client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Control_L
+        } else if !current.contains(.control) && prev.contains(.control) {
+            client?.sendKeyEvent(key: 0xFFE3, isDown: false)
+        }
+
+        if current.contains(.option) && !prev.contains(.option) {
+            client?.sendKeyEvent(key: 0xFFE9, isDown: true) // Alt_L
+        } else if !current.contains(.option) && prev.contains(.option) {
+            client?.sendKeyEvent(key: 0xFFE9, isDown: false)
+        }
+
+        if current.contains(.command) && !prev.contains(.command) {
+            client?.sendKeyEvent(key: 0xFFEB, isDown: true) // Super_L
+        } else if !current.contains(.command) && prev.contains(.command) {
+            client?.sendKeyEvent(key: 0xFFEB, isDown: false)
+        }
+
+        previousModifiers = current
+    }
+
     override func keyDown(with event: NSEvent) {
         let keysym = x11KeySym(for: event)
-        client?.sendKeyEvent(key: keysym, isDown: true)
+        if keysym != 0 {
+            client?.sendKeyEvent(key: keysym, isDown: true)
+        }
     }
 
     override func keyUp(with event: NSEvent) {
         let keysym = x11KeySym(for: event)
-        client?.sendKeyEvent(key: keysym, isDown: false)
+        if keysym != 0 {
+            client?.sendKeyEvent(key: keysym, isDown: false)
+        }
     }
 
     private func x11KeySym(for event: NSEvent) -> UInt32 {
@@ -310,6 +442,7 @@ private final class VNCView: NSView {
         case 49: return 0x0020 // Space
         case 51: return 0xFF08 // Backspace
         case 53: return 0xFF1B // Escape
+        case 76: return 0xFF8D // Keypad Enter
         case 117: return 0xFFFF // Delete
         case 123: return 0xFF51 // Left
         case 124: return 0xFF53 // Right
@@ -319,9 +452,27 @@ private final class VNCView: NSView {
         case 119: return 0xFF57 // End
         case 116: return 0xFF55 // Page Up
         case 121: return 0xFF56 // Page Down
+        case 122: return 0xFFBE // F1
+        case 120: return 0xFFBF // F2
+        case 99:  return 0xFFC0 // F3
+        case 118: return 0xFFC1 // F4
+        case 96:  return 0xFFC2 // F5
+        case 97:  return 0xFFC3 // F6
+        case 98:  return 0xFFC4 // F7
+        case 100: return 0xFFC5 // F8
+        case 101: return 0xFFC6 // F9
+        case 109: return 0xFFC7 // F10
+        case 103: return 0xFFC8 // F11
+        case 111: return 0xFFC9 // F12
         default:
-            if let chars = event.charactersIgnoringModifiers, let first = chars.utf16.first {
-                return UInt32(first)
+            if let chars = event.characters, let first = chars.unicodeScalars.first {
+                let val = first.value
+                if val >= 32 && val <= 126 {
+                    return UInt32(val)
+                }
+            }
+            if let chars = event.charactersIgnoringModifiers, let first = chars.unicodeScalars.first {
+                return UInt32(first.value)
             }
             return 0
         }

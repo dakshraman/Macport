@@ -16,7 +16,9 @@ public final class RFBDisplayClient: @unchecked Sendable {
     }
 
     private let socketPath: String
-    private let queue = DispatchQueue(label: "com.dakshraman.macport.rfb", qos: .userInteractive)
+    private let readQueue = DispatchQueue(label: "com.dakshraman.macport.rfb.read", qos: .userInteractive)
+    private let inputQueue = DispatchQueue(label: "com.dakshraman.macport.rfb.input", qos: .userInteractive)
+    private let writeLock = NSLock()
     private var socketFD: Int32 = -1
     private var isRunning = false
 
@@ -36,21 +38,20 @@ public final class RFBDisplayClient: @unchecked Sendable {
     }
 
     public func connect() {
-        queue.async { [weak self] in
+        readQueue.async { [weak self] in
             self?.runLoop()
         }
     }
 
     public func disconnect() {
-        queue.async { [weak self] in
-            guard let self = self else { return }
-            self.isRunning = false
-            if self.socketFD >= 0 {
-                close(self.socketFD)
-                self.socketFD = -1
-            }
-            self.onDisconnect?()
+        guard isRunning || socketFD >= 0 else { return }
+        isRunning = false
+        if socketFD >= 0 {
+            Darwin.shutdown(socketFD, SHUT_RDWR)
+            Darwin.close(socketFD)
+            socketFD = -1
         }
+        onDisconnect?()
     }
 
     // MARK: - Input Events
@@ -61,10 +62,12 @@ public final class RFBDisplayClient: @unchecked Sendable {
     ///   - y: Guest Y coordinate (0..<height)
     ///   - buttonMask: Bitmask of buttons (bit 0 = Left, bit 1 = Middle, bit 2 = Right)
     public func sendPointerEvent(x: Int, y: Int, buttonMask: UInt8) {
-        queue.async { [weak self] in
+        inputQueue.async { [weak self] in
             guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
-            let clampedX = max(0, min(UInt16(self.width), UInt16(x)))
-            let clampedY = max(0, min(UInt16(self.height), UInt16(y)))
+            let maxX = self.width > 0 ? UInt16(self.width - 1) : 0
+            let maxY = self.height > 0 ? UInt16(self.height - 1) : 0
+            let clampedX = max(0, min(maxX, UInt16(x)))
+            let clampedY = max(0, min(maxY, UInt16(y)))
 
             var msg = [UInt8](repeating: 0, count: 6)
             msg[0] = 5 // PointerEvent
@@ -83,7 +86,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
     ///   - key: X11 keysym
     ///   - isDown: True for key press, false for key release
     public func sendKeyEvent(key: UInt32, isDown: Bool) {
-        queue.async { [weak self] in
+        inputQueue.async { [weak self] in
             guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
             var msg = [UInt8](repeating: 0, count: 8)
             msg[0] = 4 // KeyEvent
@@ -109,7 +112,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
         sendKeyEvent(key: alt, isDown: true)
         sendKeyEvent(key: del, isDown: true)
 
-        queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+        inputQueue.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             self?.sendKeyEvent(key: del, isDown: false)
             self?.sendKeyEvent(key: alt, isDown: false)
             self?.sendKeyEvent(key: ctrl, isDown: false)
@@ -401,8 +404,10 @@ public final class RFBDisplayClient: @unchecked Sendable {
     }
 
     private func writeExact(_ bytes: [UInt8]) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
         var totalWritten = 0
-        while totalWritten < bytes.count && isRunning {
+        while totalWritten < bytes.count && isRunning && socketFD >= 0 {
             let n = bytes.withUnsafeBytes { ptr in
                 Darwin.write(socketFD, ptr.baseAddress! + totalWritten, bytes.count - totalWritten)
             }
