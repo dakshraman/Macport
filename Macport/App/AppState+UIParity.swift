@@ -3,6 +3,12 @@ import Combine
 import Foundation
 import MacportKit
 
+enum ControlCenterViewMode: String, CaseIterable, Identifiable {
+    case gallery = "Gallery"
+    case split = "Sidebar"
+    var id: String { rawValue }
+}
+
 /// Selection and sheet state for the UI-parity surfaces.
 ///
 /// This is deliberately not part of `AppState`: `AppState` is the runtime seam,
@@ -15,6 +21,9 @@ final class UIParityState: ObservableObject {
     /// The machine selected in the library. Kept here because the `Machine` menu
     /// commands act on the same selection as the sidebar.
     @Published var selection: VMConfiguration.ID?
+
+    /// Parallels Desktop style Control Center view mode: Gallery (grid) or Sidebar (split)
+    @Published var viewMode: ControlCenterViewMode = .gallery
 
     @Published var isPresentingImport = false
     @Published var isPresentingSettings = false
