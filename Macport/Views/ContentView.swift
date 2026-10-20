@@ -65,6 +65,11 @@ struct ContentView: View {
             problemOverlay
         }
         .tint(.macportAccent)
+        .onAppear {
+            if let logo = NSImage(named: "AppLogo") {
+                NSApp.applicationIconImage = logo
+            }
+        }
     }
 
     private var selectedConfig: VMConfiguration? {
@@ -116,37 +121,63 @@ struct EmptyStateView: View {
     @EnvironmentObject private var ui: UIParityState
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "shippingbox")
-                .font(.system(size: 44, weight: .thin))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+        VStack(spacing: 20) {
+            Image("AppLogo")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .shadow(color: Color.black.opacity(0.35), radius: 12, y: 6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .accessibilityLabel("Macport App Logo")
 
-            Text("No virtual machines")
-                .font(.title3.weight(.semibold))
+            VStack(spacing: 6) {
+                Text("Macport")
+                    .font(.system(.title2, design: .rounded).weight(.bold))
+                Text("Native Apple Silicon Virtual Machine Manager")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
-            Text("Create one or import a disk image.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Text("No virtual machines yet")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
 
-            HStack(spacing: 12) {
-                Button("New Virtual Machine…") {
-                    state.isPresentingCreateSheet = true
-                }
-                .controlSize(.large)
-
-                Button("Import a Disk Image…") {
-                    ui.isPresentingImport = true
-                }
-                .controlSize(.large)
+                Text("Create a new machine from an ISO or import an existing disk image.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(.top, 4)
 
-            Text("Macport runs Arm64 Linux and Windows 11 on Arm on the same CPU as the host.")
-                .font(.caption)
+            HStack(spacing: 12) {
+                Button {
+                    state.isPresentingCreateSheet = true
+                } label: {
+                    Label("New Virtual Machine…", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button {
+                    ui.isPresentingImport = true
+                } label: {
+                    Label("Import Disk Image…", systemImage: "arrow.down.doc")
+                }
+                .controlSize(.large)
+            }
+            .padding(.top, 8)
+
+            Text("Macport runs ARM64 Linux and Windows 11 on Arm at native speed via the macOS hypervisor.")
+                .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
+                .padding(.top, 6)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
