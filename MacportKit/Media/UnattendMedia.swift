@@ -195,6 +195,11 @@ public enum UnattendMedia {
               <Description>Storage check</Description>
               <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
             </RunSynchronousCommand>
+            <RunSynchronousCommand wcm:action="add">
+              <Order>5</Order>
+              <Description>Network check</Description>
+              <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+            </RunSynchronousCommand>
           </RunSynchronous>
         </component>
       </settings>

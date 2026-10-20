@@ -186,15 +186,14 @@ public enum AdmissionControl {
         capacity: HostCapacity
     ) -> EngineError? {
         let usable = max(1, capacity.processorCount - 1)
-        let requested = max(1, running.reduce(0) { $0 + max(1, $1.cpuCount) })
-            + max(1, config.cpuCount)
+        let runningCPUs = running.reduce(0) { $0 + max(1, $1.cpuCount) }
+        let requested = runningCPUs + max(1, config.cpuCount)
 
         guard requested <= usable else {
             return .hostResourceUnavailable(
                 "This Mac has \(capacity.processorCount) processors and Macport keeps "
                     + "one for the system, leaving \(usable) for guests. The running "
-                    + "virtual machines use "
-                    + "\(max(1, running.reduce(0) { $0 + max(1, $1.cpuCount) })) and this "
+                    + "virtual machines use \(runningCPUs) and this "
                     + "one asks for \(max(1, config.cpuCount)), a total of \(requested). "
                     + "Stop a virtual machine or lower its processor count."
             )
