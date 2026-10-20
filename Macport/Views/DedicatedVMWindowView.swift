@@ -137,21 +137,24 @@ struct DedicatedVMWindowView: View {
     }
 
     private var displayControls: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Picker("Scaling", selection: $scalingMode) {
                 Text("Fit").tag(DisplayScalingMode.aspectFit)
                 Text("Stretch").tag(DisplayScalingMode.fill)
-                Text("1:1").tag(DisplayScalingMode.center)
             }
             .pickerStyle(.segmented)
-            .frame(width: 140)
-            .help("Display Scaling: Fit aspect ratio, Stretch to eliminate borders, or 1:1 Native")
+            .frame(width: 116)
+            .help("Display Scaling: Fit aspect ratio or Stretch to eliminate borders")
 
             Button {
                 snapWindowToGuestResolution()
             } label: {
-                Label("Snap", systemImage: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
-                    .font(.system(size: 11))
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
+                        .font(.system(size: 10))
+                    Text("Snap")
+                        .font(.system(size: 11, weight: .medium))
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

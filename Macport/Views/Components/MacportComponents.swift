@@ -98,7 +98,7 @@ struct EngineChip: View {
     /// engines ship with; anything else falls back to its identifier so a new
     /// engine cannot silently become a blank chip.
     private var shortName: String {
-        if identifier == QEMUEngine.identifier { return "QEMU" }
+        if identifier == QEMUEngine.identifier { return "HVF" }
         if identifier == VZEngine.identifier { return "VZ" }
         return identifier.uppercased()
     }
