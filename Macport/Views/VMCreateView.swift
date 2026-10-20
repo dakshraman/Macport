@@ -817,24 +817,32 @@ struct VMCreateView: View {
         let hostCores = maxHostCPUs
         let hostRAM = maxHostMemoryGB
 
+        // On an 8 GB host (usable = 6 GB), calibrate defaults so machines fit host admission limits
+        let defaultMem: Int
+        if hostRAM <= 6 {
+            defaultMem = selectedOS.guestKind == .windowsARM ? 4 : 2
+        } else {
+            defaultMem = min(8, hostRAM - 2)
+        }
+
         switch selectedProfile {
         case .productivity:
             cpuCount = min(4, hostCores)
-            memoryGB = min(8, hostRAM)
+            memoryGB = defaultMem
             diskGB = 64
             shareDesktop = true
             shareDocuments = true
             shareDownloads = true
         case .softwareDev:
             cpuCount = max(2, min(hostCores - 1, 8))
-            memoryGB = max(4, min(hostRAM / 2, 16))
+            memoryGB = min(max(defaultMem, 4), hostRAM > 4 ? hostRAM - 2 : hostRAM)
             diskGB = 128
             shareDesktop = true
             shareDocuments = true
             shareDownloads = true
         case .performance:
             cpuCount = max(2, hostCores - 1)
-            memoryGB = max(4, Int(Double(hostRAM) * 0.75))
+            memoryGB = min(max(defaultMem + 1, 4), hostRAM)
             diskGB = 128
             shareDesktop = true
             shareDocuments = true
