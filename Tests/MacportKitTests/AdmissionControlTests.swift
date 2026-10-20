@@ -150,6 +150,17 @@ final class AdmissionControlTests: XCTestCase {
         XCTAssertNoThrow(try result.get())
     }
 
+    func testSingleVMRequestingAllUsableHostCPUsIsAdmitted() {
+        // A 6-core host leaves 5 for guests. A single VM asking for 5 cpus with 0 running VMs must be admitted.
+        let result = AdmissionControl.check(
+            config(cpus: 5),
+            running: [],
+            capacity: capacity(cpus: 6)
+        )
+        XCTAssertNoThrow(try result.get())
+    }
+
+
     // MARK: - Disk
 
     func testDiskFloorIsRefusedWithNumbers() {
