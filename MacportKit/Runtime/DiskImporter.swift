@@ -43,7 +43,7 @@ public enum DiskImporter {
     /// Extensions offered in the import picker. The list is what the UI shows and
     /// what error messages name; `qemu-img` itself auto-detects more.
     public static let supportedExtensions: Set<String> = [
-        "qcow2", "img", "raw", "vmdk", "vdi", "vhdx", "ova"
+        "qcow2", "img", "raw", "vmdk", "vdi", "vhdx", "ova", "hds"
     ]
 
     /// The format a converted disk is written in.
