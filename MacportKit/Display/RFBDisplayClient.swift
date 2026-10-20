@@ -28,6 +28,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
 
     public var onFrame: (@Sendable (Frame) -> Void)?
     public var onDisconnect: (@Sendable () -> Void)?
+    public var onClipboardTextReceived: (@Sendable (String) -> Void)?
 
     public init(socketPath: String) {
         self.socketPath = socketPath
@@ -119,6 +120,26 @@ public final class RFBDisplayClient: @unchecked Sendable {
         }
     }
 
+    /// Send clipboard text (ClientCutText) to the guest.
+    public func sendClipboardText(_ text: String) {
+        inputQueue.async { [weak self] in
+            guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
+            guard let data = text.data(using: .latin1) ?? text.data(using: .utf8) else { return }
+            var msg = [UInt8](repeating: 0, count: 8)
+            msg[0] = 6 // ClientCutText
+            msg[1] = 0; msg[2] = 0; msg[3] = 0 // padding
+            let len = UInt32(data.count)
+            msg[4] = UInt8((len >> 24) & 0xFF)
+            msg[5] = UInt8((len >> 16) & 0xFF)
+            msg[6] = UInt8((len >> 8) & 0xFF)
+            msg[7] = UInt8(len & 0xFF)
+
+            var fullMsg = msg
+            fullMsg.append(contentsOf: data)
+            try? self.writeExact(fullMsg)
+        }
+    }
+
     // MARK: - Protocol Loop
 
     private func runLoop() {
@@ -155,7 +176,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
                 case 2: // Bell
                     break
                 case 3: // ServerCutText
-                    try skipServerCutText()
+                    try handleServerCutText()
                 default:
                     break
                 }
@@ -370,7 +391,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
         _ = try readExact(count: nColours * 6)
     }
 
-    private func skipServerCutText() throws {
+    private func handleServerCutText() throws {
         _ = try readExact(count: 3) // padding
         let lenBytes = try readExact(count: 4)
         let len = Int(
@@ -379,7 +400,11 @@ public final class RFBDisplayClient: @unchecked Sendable {
             UInt32(lenBytes[2]) << 8 |
             UInt32(lenBytes[3])
         )
-        _ = try readExact(count: len)
+        guard len > 0 else { return }
+        let bytes = try readExact(count: len)
+        if let string = String(bytes: bytes, encoding: .utf8) ?? String(bytes: bytes, encoding: .isoLatin1) {
+            onClipboardTextReceived?(string)
+        }
     }
 
     // MARK: - Low-level I/O

@@ -15,6 +15,7 @@ struct EmbeddedVNCDisplayView: View {
     @State private var isConnected = false
     @State private var guestSize: CGSize = .zero
     @State private var client: RFBDisplayClient?
+    @State private var scalingMode: DisplayScalingMode = .aspectFit
 
     var body: some View {
         ZStack {
@@ -24,7 +25,8 @@ struct EmbeddedVNCDisplayView: View {
                 socketPath: socketPath,
                 isConnected: $isConnected,
                 guestSize: $guestSize,
-                clientHolder: $client
+                clientHolder: $client,
+                scalingMode: $scalingMode
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -44,7 +46,7 @@ struct EmbeddedVNCDisplayView: View {
             // Parallels Floating Console Overlay Bar
             VStack {
                 Spacer()
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     if guestSize.width > 0 {
                         Text("\(Int(guestSize.width)) × \(Int(guestSize.height))")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -52,6 +54,42 @@ struct EmbeddedVNCDisplayView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(Color.white.opacity(0.12)))
+
+                        // Snap Window to Guest Resolution
+                        Button {
+                            snapWindowToGuest()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
+                                    .font(.system(size: 10))
+                                Text("Snap")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Snap window size directly to guest resolution (\(Int(guestSize.width))×\(Int(guestSize.height)))")
+
+                        // Scaling Mode Toggle (Fit vs Stretch)
+                        Button {
+                            scalingMode = scalingMode == .aspectFit ? .fill : .aspectFit
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: scalingMode == .aspectFit ? "aspectratio" : "arrow.up.left.and.down.right.magnifyingglass")
+                                    .font(.system(size: 10))
+                                Text(scalingMode == .aspectFit ? "Fit" : "Stretch")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(scalingMode == .fill ? Color.macportAccent.opacity(0.6) : Color.white.opacity(0.15)))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Toggle between Aspect Fit and Stretch to Fill (eliminates black borders)")
                     }
 
                     Button {
@@ -177,6 +215,24 @@ struct EmbeddedVNCDisplayView: View {
             }
         }
     }
+
+    private func snapWindowToGuest() {
+        guard guestSize.width > 0, guestSize.height > 0, let window = NSApp.keyWindow else { return }
+        let titlebarHeight = window.frame.height - (window.contentView?.frame.height ?? window.frame.height)
+        var newFrame = window.frame
+        newFrame.size = CGSize(width: guestSize.width, height: guestSize.height + titlebarHeight)
+        newFrame.origin.y = window.frame.maxY - newFrame.height
+        window.setFrame(newFrame, display: true, animate: true)
+    }
+}
+
+// MARK: - Display Scaling Mode
+
+public enum DisplayScalingMode: String, CaseIterable, Identifiable, Sendable {
+    case aspectFit = "Fit"
+    case fill = "Stretch"
+    case center = "1:1 Native"
+    public var id: String { rawValue }
 }
 
 // MARK: - AppKit View Representable
@@ -187,12 +243,14 @@ private struct VNCRepresentable: NSViewRepresentable {
     @Binding var isConnected: Bool
     @Binding var guestSize: CGSize
     @Binding var clientHolder: RFBDisplayClient?
+    @Binding var scalingMode: DisplayScalingMode
 
     func makeNSView(context: Context) -> VNCView {
         let view = VNCView()
         let client = RFBDisplayClient(socketPath: socketPath)
         view.client = client
         clientHolder = client
+        view.scalingMode = scalingMode
 
         client.onFrame = { frame in
             Task { @MainActor in
@@ -207,6 +265,14 @@ private struct VNCRepresentable: NSViewRepresentable {
             }
         }
 
+        client.onClipboardTextReceived = { text in
+            Task { @MainActor in
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(text, forType: .string)
+            }
+        }
+
         client.onDisconnect = {
             Task { @MainActor in
                 isConnected = false
@@ -217,7 +283,11 @@ private struct VNCRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: VNCView, context: Context) {}
+    func updateNSView(_ nsView: VNCView, context: Context) {
+        if nsView.scalingMode != scalingMode {
+            nsView.scalingMode = scalingMode
+        }
+    }
 
     static func dismantleNSView(_ nsView: VNCView, coordinator: ()) {
         nsView.client?.disconnect()
@@ -228,6 +298,11 @@ private struct VNCRepresentable: NSViewRepresentable {
 
 private final class VNCView: NSView {
     var client: RFBDisplayClient?
+    var scalingMode: DisplayScalingMode = .aspectFit {
+        didSet {
+            needsDisplay = true
+        }
+    }
     private var currentImage: CGImage?
     private var trackingAreaRef: NSTrackingArea?
     private var previousModifiers: NSEvent.ModifierFlags = []
@@ -300,12 +375,21 @@ private final class VNCView: NSView {
 
     private func aspectFitRect(for size: CGSize, in container: CGRect) -> CGRect {
         guard size.width > 0 && size.height > 0 else { return container }
-        let scale = min(container.width / size.width, container.height / size.height)
-        let scaledW = size.width * scale
-        let scaledH = size.height * scale
-        let x = container.origin.x + (container.width - scaledW) / 2
-        let y = container.origin.y + (container.height - scaledH) / 2
-        return CGRect(x: x, y: y, width: scaledW, height: scaledH)
+        switch scalingMode {
+        case .fill:
+            return container
+        case .center:
+            let x = container.origin.x + (container.width - size.width) / 2
+            let y = container.origin.y + (container.height - size.height) / 2
+            return CGRect(x: x, y: y, width: size.width, height: size.height)
+        case .aspectFit:
+            let scale = min(container.width / size.width, container.height / size.height)
+            let scaledW = size.width * scale
+            let scaledH = size.height * scale
+            let x = container.origin.x + (container.width - scaledW) / 2
+            let y = container.origin.y + (container.height - scaledH) / 2
+            return CGRect(x: x, y: y, width: scaledW, height: scaledH)
+        }
     }
 
     // MARK: - Mouse Input Mapping
@@ -422,6 +506,39 @@ private final class VNCView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Mac-to-Windows shortcut translation: ⌘C -> Ctrl+C, ⌘V -> send clipboard + Ctrl+V, ⌘A -> Ctrl+A
+        if event.modifierFlags.contains(.command) {
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            if key == "c" {
+                client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Ctrl_L
+                client?.sendKeyEvent(key: 0x0063, isDown: true) // c
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.client?.sendKeyEvent(key: 0x0063, isDown: false)
+                    self?.client?.sendKeyEvent(key: 0xFFE3, isDown: false)
+                }
+                return
+            } else if key == "v" {
+                if let str = NSPasteboard.general.string(forType: .string) {
+                    client?.sendClipboardText(str)
+                }
+                client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Ctrl_L
+                client?.sendKeyEvent(key: 0x0076, isDown: true) // v
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.client?.sendKeyEvent(key: 0x0076, isDown: false)
+                    self?.client?.sendKeyEvent(key: 0xFFE3, isDown: false)
+                }
+                return
+            } else if key == "a" {
+                client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Ctrl_L
+                client?.sendKeyEvent(key: 0x0061, isDown: true) // a
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.client?.sendKeyEvent(key: 0x0061, isDown: false)
+                    self?.client?.sendKeyEvent(key: 0xFFE3, isDown: false)
+                }
+                return
+            }
+        }
+
         let keysym = x11KeySym(for: event)
         if keysym != 0 {
             client?.sendKeyEvent(key: keysym, isDown: true)
