@@ -18,7 +18,7 @@ struct DedicatedVMWindowView: View {
 
     let config: VMConfiguration
 
-    @State private var scalingMode: DisplayScalingMode = .aspectFit
+    @State private var scalingMode: DisplayScalingMode = .fill
     @State private var isPresentingSettings = false
     @State private var isPresentingSnapshots = false
 
@@ -46,6 +46,15 @@ struct DedicatedVMWindowView: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .background(Color.black)
+        .background(
+            WindowAccessor { window in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    if !window.styleMask.contains(.fullScreen) {
+                        window.toggleFullScreen(nil)
+                    }
+                }
+            }
+        )
         .contextMenu {
             displayContextMenu
         }
@@ -66,17 +75,14 @@ struct DedicatedVMWindowView: View {
 
     @ViewBuilder
     private var displayContextMenu: some View {
-        Button(scalingMode == .fill ? "Aspect Ratio: Fit (⌘2)" : "Display: Stretch to Fill (⌘3)") {
-            scalingMode = (scalingMode == .fill) ? .aspectFit : .fill
-        }
-        Button("Snap Window to Guest (⌘1)") {
-            snapWindowToGuestResolution()
-        }
         Button("Toggle Full Screen (⌃⌘F)") {
             NSApp.keyWindow?.toggleFullScreen(nil)
         }
         Divider()
         if vmState.isActive {
+            Button("Paste from Mac Clipboard (⌘V)") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportPasteClipboard"), object: nil)
+            }
             Button("Send Ctrl+Alt+Del") {
                 NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
             }
@@ -162,3 +168,22 @@ struct DedicatedVMWindowView: View {
         }
     }
 }
+
+// MARK: - Window Accessor Helper
+
+private struct WindowAccessor: NSViewRepresentable {
+    let callback: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                callback(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+

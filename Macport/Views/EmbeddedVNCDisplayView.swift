@@ -17,7 +17,7 @@ struct EmbeddedVNCDisplayView: View {
     @State private var isConnected = false
     @State private var guestSize: CGSize = .zero
     @State private var client: RFBDisplayClient?
-    @State private var internalScalingMode: DisplayScalingMode = .aspectFit
+    @State private var internalScalingMode: DisplayScalingMode = .fill
 
     private var currentScalingMode: Binding<DisplayScalingMode> {
         externalScalingMode ?? $internalScalingMode
@@ -306,7 +306,7 @@ private struct VNCRepresentable: NSViewRepresentable {
 
 private final class VNCView: NSView {
     var client: RFBDisplayClient?
-    var scalingMode: DisplayScalingMode = .aspectFit {
+    var scalingMode: DisplayScalingMode = .fill {
         didSet {
             needsDisplay = true
         }

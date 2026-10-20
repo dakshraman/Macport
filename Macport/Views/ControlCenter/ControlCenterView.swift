@@ -10,6 +10,7 @@ struct ControlCenterView: View {
     @EnvironmentObject private var store: VMStore
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var ui: UIParityState
+    @Environment(\.openWindow) private var openWindow
 
     @State private var searchText = ""
     @State private var filterState: VMFilter = .all
@@ -59,6 +60,14 @@ struct ControlCenterView: View {
             hostCapacityFooter
         }
         .background(Color.macportWindow)
+        .task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            for config in store.machines {
+                if state.state(for: config.id).isActive {
+                    openWindow(value: config.id)
+                }
+            }
+        }
     }
 
     // MARK: - Top Bar
