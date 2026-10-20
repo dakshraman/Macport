@@ -35,6 +35,9 @@ struct VMDetailView: View {
         if vmState.isActive, let machine = state.liveMachine(for: config.id) {
             VMDisplayView(machine: machine)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
+            EmbeddedVNCDisplayView(socketPath: vncPath)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 LazyVGrid(

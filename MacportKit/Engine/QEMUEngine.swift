@@ -1323,6 +1323,13 @@ public final class QEMUEngine: NSObject, VMEngine {
         return socketPath(named: "macport-\(id.uuidString.prefix(8)).qmp")
     }
 
+    /// The VNC framebuffer socket for headless embedded console display.
+    public nonisolated static func vncSocketPath(for id: UUID) -> String {
+        let derived = monitorSocketPath(for: id) + ".vnc"
+        if derived.utf8.count < sunPathCapacity { return derived }
+        return socketPath(named: "macport-\(id.uuidString.prefix(8)).vnc")
+    }
+
     /// A socket path in the first per-user location that fits the kernel's limit.
     nonisolated private static func socketPath(named name: String) -> String {
         let candidates = [
@@ -1552,7 +1559,13 @@ public final class QEMUEngine: NSObject, VMEngine {
         // it is the difference between diagnosing a boot and guessing at one.
         args += ["-serial", "file:\(bundle.appendingPathComponent(consoleFileName).path)"]
 
-        args += ["-display", Self.displayBackend]
+        if Self.displayBackend == "none" {
+            let vnc = vncSocketPath(for: config.id)
+            unlink(vnc)
+            args += ["-display", "none", "-vnc", "unix:\(vnc)"]
+        } else {
+            args += ["-display", Self.displayBackend]
+        }
 
         return args
     }
@@ -1570,8 +1583,8 @@ public final class QEMUEngine: NSObject, VMEngine {
     /// is no QEMU-side knob to change it. Until Macport ships firmware of its own,
     /// scaling the window is the only way to make a Windows guest fill more of the
     /// screen — so it is on by default rather than left as a menu item to find.
-    nonisolated private static var displayBackend: String {
-        ProcessInfo.processInfo.environment["MACPORT_QEMU_DISPLAY"] ?? "cocoa,zoom-to-fit=on"
+    nonisolated public static var displayBackend: String {
+        ProcessInfo.processInfo.environment["MACPORT_QEMU_DISPLAY"] ?? "none"
     }
 
     // MARK: - Monitor channel

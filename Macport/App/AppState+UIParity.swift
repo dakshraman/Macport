@@ -94,6 +94,11 @@ extension AppState {
         hostingEngine(for: config).identifier
     }
 
+    func vncSocketPath(for id: UUID) -> String? {
+        let path = QEMUEngine.vncSocketPath(for: id)
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
     func allocatedMemoryBytes() -> UInt64 {
         activeInstances.reduce(0) { total, instance in
             let (sum, overflow) = total.addingReportingOverflow(instance.config.memoryBytes)
