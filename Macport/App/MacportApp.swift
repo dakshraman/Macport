@@ -203,6 +203,11 @@ struct MacportApp: App {
             }
             .disabled(selectedConfiguration == nil || !selectedState.isActive)
 
+            Button("Paste from Mac Clipboard") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportPasteClipboard"), object: nil)
+            }
+            .disabled(selectedConfiguration == nil || !selectedState.isActive)
+
             Divider()
 
             Button("Show in Finder") {

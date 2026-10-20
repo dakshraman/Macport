@@ -88,18 +88,7 @@ public final class RFBDisplayClient: @unchecked Sendable {
     ///   - isDown: True for key press, false for key release
     public func sendKeyEvent(key: UInt32, isDown: Bool) {
         inputQueue.async { [weak self] in
-            guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
-            var msg = [UInt8](repeating: 0, count: 8)
-            msg[0] = 4 // KeyEvent
-            msg[1] = isDown ? 1 : 0
-            msg[2] = 0
-            msg[3] = 0
-            msg[4] = UInt8((key >> 24) & 0xFF)
-            msg[5] = UInt8((key >> 16) & 0xFF)
-            msg[6] = UInt8((key >> 8) & 0xFF)
-            msg[7] = UInt8(key & 0xFF)
-
-            try? self.writeExact(msg)
+            self?.sendRawKey(key: key, isDown: isDown)
         }
     }
 
@@ -138,6 +127,48 @@ public final class RFBDisplayClient: @unchecked Sendable {
             fullMsg.append(contentsOf: data)
             try? self.writeExact(fullMsg)
         }
+    }
+
+    /// Type a text string directly into the guest as a sequence of keystrokes.
+    /// This bypasses guest clipboard agent requirements and enables pasting into
+    /// any OS, terminal, installer, or command prompt directly from the host.
+    public func typeText(_ text: String) {
+        inputQueue.async { [weak self] in
+            guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
+            for char in text {
+                var keysym: UInt32 = 0
+                if char == "\n" || char == "\r" {
+                    keysym = 0xFF0D // Return
+                } else if char == "\t" {
+                    keysym = 0xFF09 // Tab
+                } else if let ascii = char.asciiValue {
+                    keysym = UInt32(ascii)
+                } else if let scalar = char.unicodeScalars.first?.value {
+                    keysym = scalar
+                }
+
+                if keysym != 0 {
+                    self.sendRawKey(key: keysym, isDown: true)
+                    usleep(8_000)
+                    self.sendRawKey(key: keysym, isDown: false)
+                    usleep(8_000)
+                }
+            }
+        }
+    }
+
+    private func sendRawKey(key: UInt32, isDown: Bool) {
+        guard isRunning && socketFD >= 0 else { return }
+        var msg = [UInt8](repeating: 0, count: 8)
+        msg[0] = 4 // KeyEvent
+        msg[1] = isDown ? 1 : 0
+        msg[2] = 0
+        msg[3] = 0
+        msg[4] = UInt8((key >> 24) & 0xFF)
+        msg[5] = UInt8((key >> 16) & 0xFF)
+        msg[6] = UInt8((key >> 8) & 0xFF)
+        msg[7] = UInt8(key & 0xFF)
+        try? writeExact(msg)
     }
 
     // MARK: - Protocol Loop

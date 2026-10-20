@@ -83,6 +83,9 @@ struct DedicatedVMWindowView: View {
             Button("Send Shift+F10 (Command Prompt)") {
                 NotificationCenter.default.post(name: NSNotification.Name("MacportSendShiftF10"), object: nil)
             }
+            Button("Paste from Mac Clipboard (⌘V)") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportPasteClipboard"), object: nil)
+            }
             Divider()
             if vmState == .paused {
                 Button("Resume (⌘P)") {

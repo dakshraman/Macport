@@ -382,6 +382,30 @@ private final class VNCView: NSView {
         ) { [weak self] _ in
             self?.snapWindowToImage()
         }
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MacportPasteClipboard"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pasteFromMacClipboard()
+        }
+    }
+
+    func pasteFromMacClipboard() {
+        guard let str = NSPasteboard.general.string(forType: .string), !str.isEmpty else { return }
+        // Ensure host modifiers are released so guest receives pure keystrokes
+        client?.sendKeyEvent(key: 0xFFEB, isDown: false) // Super_L
+        client?.sendKeyEvent(key: 0xFFE3, isDown: false) // Ctrl_L
+        client?.sendKeyEvent(key: 0xFFE9, isDown: false) // Alt_L
+        client?.sendKeyEvent(key: 0xFFE1, isDown: false) // Shift_L
+
+        // 1. Send via VNC clipboard (when guest agent is installed)
+        client?.sendClipboardText(str)
+
+        // 2. Type directly into the guest as keystrokes
+        // This guarantees instant paste in Command Prompt, PowerShell, OOBE, or any installer
+        client?.typeText(str)
     }
 
     private func snapWindowToImage() {
@@ -578,15 +602,7 @@ private final class VNCView: NSView {
                 }
                 return
             } else if key == "v" {
-                if let str = NSPasteboard.general.string(forType: .string) {
-                    client?.sendClipboardText(str)
-                }
-                client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Ctrl_L
-                client?.sendKeyEvent(key: 0x0076, isDown: true) // v
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    self?.client?.sendKeyEvent(key: 0x0076, isDown: false)
-                    self?.client?.sendKeyEvent(key: 0xFFE3, isDown: false)
-                }
+                pasteFromMacClipboard()
                 return
             } else if key == "a" {
                 client?.sendKeyEvent(key: 0xFFE3, isDown: true) // Ctrl_L
@@ -610,6 +626,21 @@ private final class VNCView: NSView {
         if keysym != 0 {
             client?.sendKeyEvent(key: keysym, isDown: false)
         }
+    }
+
+    @objc func paste(_ sender: Any?) {
+        pasteFromMacClipboard()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command) {
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            if key == "v" {
+                pasteFromMacClipboard()
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     private func x11KeySym(for event: NSEvent) -> UInt32 {
