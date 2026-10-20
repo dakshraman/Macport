@@ -19,11 +19,15 @@ public enum GuestKind: String, Codable, CaseIterable, Sendable {
     /// macOS as a guest. Only legal on Apple hardware, per the macOS licence.
     case macOSGuest
 
+    /// Windows Application running via Wine / Metal translation without a virtual machine.
+    case windowsApp
+
     public var displayName: String {
         switch self {
         case .linuxARM: return "Linux (ARM64)"
         case .windowsARM: return "Windows 11 (Arm)"
         case .macOSGuest: return "macOS"
+        case .windowsApp: return "Windows App (Translation)"
         }
     }
 
