@@ -135,23 +135,68 @@ public final class RFBDisplayClient: @unchecked Sendable {
     public func typeText(_ text: String) {
         inputQueue.async { [weak self] in
             guard let self = self, self.isRunning, self.socketFD >= 0 else { return }
-            for char in text {
-                var keysym: UInt32 = 0
-                if char == "\n" || char == "\r" {
-                    keysym = 0xFF0D // Return
-                } else if char == "\t" {
-                    keysym = 0xFF09 // Tab
-                } else if let ascii = char.asciiValue {
-                    keysym = UInt32(ascii)
-                } else if let scalar = char.unicodeScalars.first?.value {
-                    keysym = scalar
-                }
+            let shiftedMap: [Character: UInt32] = [
+                ":": 0x003B, // ;
+                "\"": 0x0027, // '
+                "|": 0x005C, // \
+                "<": 0x002C, // ,
+                ">": 0x002E, // .
+                "?": 0x002F, // /
+                "~": 0x0060, // `
+                "!": 0x0031, // 1
+                "@": 0x0032, // 2
+                "#": 0x0033, // 3
+                "$": 0x0034, // 4
+                "%": 0x0035, // 5
+                "^": 0x0036, // 6
+                "&": 0x0037, // 7
+                "*": 0x0038, // 8
+                "(": 0x0039, // 9
+                ")": 0x0030, // 0
+                "_": 0x002D, // -
+                "+": 0x003D, // =
+                "{": 0x005B, // [
+                "}": 0x005D, // ]
+            ]
 
-                if keysym != 0 {
-                    self.sendRawKey(key: keysym, isDown: true)
-                    usleep(8_000)
-                    self.sendRawKey(key: keysym, isDown: false)
-                    usleep(8_000)
+            for char in text {
+                if let baseKey = shiftedMap[char] {
+                    self.sendRawKey(key: 0xFFE1, isDown: true) // Shift_L
+                    usleep(10_000)
+                    self.sendRawKey(key: baseKey, isDown: true)
+                    usleep(10_000)
+                    self.sendRawKey(key: baseKey, isDown: false)
+                    usleep(10_000)
+                    self.sendRawKey(key: 0xFFE1, isDown: false)
+                    usleep(10_000)
+                } else if char.isUppercase, let ascii = char.lowercased().first?.asciiValue {
+                    let baseKey = UInt32(ascii)
+                    self.sendRawKey(key: 0xFFE1, isDown: true) // Shift_L
+                    usleep(10_000)
+                    self.sendRawKey(key: baseKey, isDown: true)
+                    usleep(10_000)
+                    self.sendRawKey(key: baseKey, isDown: false)
+                    usleep(10_000)
+                    self.sendRawKey(key: 0xFFE1, isDown: false)
+                    usleep(10_000)
+                } else {
+                    var keysym: UInt32 = 0
+                    if char == "\n" || char == "\r" {
+                        keysym = 0xFF0D // Return
+                    } else if char == "\t" {
+                        keysym = 0xFF09 // Tab
+                    } else if let ascii = char.asciiValue {
+                        keysym = UInt32(ascii)
+                    } else if let scalar = char.unicodeScalars.first?.value {
+                        keysym = scalar
+                    }
+
+                    if keysym != 0 {
+                        self.sendRawKey(key: keysym, isDown: true)
+                        usleep(10_000)
+                        self.sendRawKey(key: keysym, isDown: false)
+                        usleep(10_000)
+                    }
                 }
             }
         }
