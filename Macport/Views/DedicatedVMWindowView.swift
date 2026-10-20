@@ -35,8 +35,12 @@ struct DedicatedVMWindowView: View {
                     VMDisplayView(machine: machine)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
-                    EmbeddedVNCDisplayView(socketPath: vncPath, externalScalingMode: $scalingMode)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    EmbeddedVNCDisplayView(
+                        socketPath: vncPath,
+                        externalScalingMode: $scalingMode,
+                        showOverlayBar: false
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     stoppedStatePlaceholder
                 }
@@ -157,21 +161,45 @@ struct DedicatedVMWindowView: View {
     }
 
     private var quickKeysCluster: some View {
-        Button {
-            NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 10))
-                Text("Ctrl+Alt+Del")
-                    .font(.system(size: 11, weight: .medium))
+        HStack(spacing: 6) {
+            Button {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 10))
+                    Text("Ctrl+Alt+Del")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
+            .buttonStyle(.plain)
+            .help("Send Ctrl+Alt+Del (Unlock logon / Task Manager)")
+
+            Menu {
+                Button("Shift + F10 (Command Prompt)") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendShiftF10"), object: nil)
+                }
+                Button("Space") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0x0020))
+                }
+                Button("Tab") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0xFF09))
+                }
+                Button("Enter") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0xFF0D))
+                }
+            } label: {
+                Image(systemName: "ellipsis.rectangle")
+                    .font(.system(size: 11))
+                    .padding(5)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
+            }
+            .menuStyle(.borderlessButton)
+            .help("Send guest keys (Shift+F10, Tab, Enter, Space)")
         }
-        .buttonStyle(.plain)
-        .help("Send Ctrl+Alt+Del")
     }
 
     @ViewBuilder
@@ -297,13 +325,6 @@ struct DedicatedVMWindowView: View {
     // MARK: - Actions
 
     private func snapWindowToGuestResolution() {
-        guard let window = NSApp.keyWindow else { return }
-        let targetW: CGFloat = 800
-        let targetH: CGFloat = 600
-        let titlebarHeight = window.frame.height - (window.contentView?.frame.height ?? window.frame.height)
-        var newFrame = window.frame
-        newFrame.size = CGSize(width: targetW, height: targetH + titlebarHeight)
-        newFrame.origin.y = window.frame.maxY - newFrame.height
-        window.setFrame(newFrame, display: true, animate: true)
+        NotificationCenter.default.post(name: NSNotification.Name("MacportSnapWindow"), object: nil)
     }
 }

@@ -40,6 +40,9 @@ struct ParallelsVMToolbar: View {
 
             Button {
                 openWindow(value: config.id)
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    ui.viewMode = .gallery
+                }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "macwindow.on.rectangle")

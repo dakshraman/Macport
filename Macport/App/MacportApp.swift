@@ -61,6 +61,13 @@ struct MacportApp: App {
                 .keyboardShortcut("0", modifiers: .command)
             }
 
+            CommandGroup(after: .windowSize) {
+                Button("Snap Window to Guest") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSnapWindow"), object: nil)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+            }
+
             machineCommands
         }
 
@@ -165,6 +172,11 @@ struct MacportApp: App {
 
             Button("Send Ctrl+Alt+Del") {
                 NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
+            }
+            .disabled(selectedConfiguration == nil || !selectedState.isActive)
+
+            Button("Send Shift+F10 (Command Prompt)") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportSendShiftF10"), object: nil)
             }
             .disabled(selectedConfiguration == nil || !selectedState.isActive)
 

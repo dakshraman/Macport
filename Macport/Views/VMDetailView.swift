@@ -36,7 +36,7 @@ struct VMDetailView: View {
             VMDisplayView(machine: machine)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
-            EmbeddedVNCDisplayView(socketPath: vncPath)
+            EmbeddedVNCDisplayView(socketPath: vncPath, showOverlayBar: false)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {

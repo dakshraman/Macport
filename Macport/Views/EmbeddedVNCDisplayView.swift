@@ -12,6 +12,7 @@ import MacportKit
 struct EmbeddedVNCDisplayView: View {
     let socketPath: String
     var externalScalingMode: Binding<DisplayScalingMode>? = nil
+    var showOverlayBar: Bool = false
 
     @State private var isConnected = false
     @State private var guestSize: CGSize = .zero
@@ -48,10 +49,11 @@ struct EmbeddedVNCDisplayView: View {
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.75)))
             }
 
-            // Parallels Floating Console Overlay Bar
-            VStack {
-                Spacer()
-                HStack(spacing: 10) {
+            // Parallels Floating Console Overlay Bar (optional, disabled by default to avoid obstructing guest UI)
+            if showOverlayBar {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 10) {
                     if guestSize.width > 0 {
                         Text("\(Int(guestSize.width)) × \(Int(guestSize.height))")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -220,6 +222,7 @@ struct EmbeddedVNCDisplayView: View {
             }
         }
     }
+    }
 
     private func snapWindowToGuest() {
         guard guestSize.width > 0, guestSize.height > 0, let window = NSApp.keyWindow else { return }
@@ -345,6 +348,51 @@ private final class VNCView: NSView {
         ) { [weak self] _ in
             self?.client?.sendCtrlAltDel()
         }
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MacportSendShiftF10"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let client = self?.client else { return }
+            client.sendKeyEvent(key: 0xFFE1, isDown: true) // Shift
+            client.sendKeyEvent(key: 0xFFC7, isDown: true) // F10
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                client.sendKeyEvent(key: 0xFFC7, isDown: false)
+                client.sendKeyEvent(key: 0xFFE1, isDown: false)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MacportSendKey"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            guard let key = notif.object as? UInt32, let client = self?.client else { return }
+            client.sendKeyEvent(key: key, isDown: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                client.sendKeyEvent(key: key, isDown: false)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MacportSnapWindow"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.snapWindowToImage()
+        }
+    }
+
+    private func snapWindowToImage() {
+        guard let image = currentImage, let window = self.window else { return }
+        let targetW = CGFloat(image.width)
+        let targetH = CGFloat(image.height)
+        let titlebarHeight = window.frame.height - (window.contentView?.frame.height ?? window.frame.height)
+        var newFrame = window.frame
+        newFrame.size = CGSize(width: targetW, height: targetH + titlebarHeight)
+        newFrame.origin.y = window.frame.maxY - newFrame.height
+        window.setFrame(newFrame, display: true, animate: true)
     }
 
     required init?(coder: NSCoder) {
