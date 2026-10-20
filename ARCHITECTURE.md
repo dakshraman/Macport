@@ -52,7 +52,7 @@ work. Macport vendors its own runtime:
   share/qemu/   firmware, keymaps, option ROMs
 ```
 
-167 MB, produced by `QEMURuntimeBundler`, which copies the tool and its transitive
+199 MB, produced by `QEMURuntimeBundler`, which copies the tool and its transitive
 dependencies, rewrites install names, resolves symlinks (Homebrew's `share/qemu`
 is a symlink, and a copied symlink points nowhere), and re-signs everything ad-hoc
 with the entitlement the accelerator needs. The result runs from an unrelated
@@ -157,6 +157,62 @@ fixed timestamp, and should not be allowed to grow into a general FAT
 implementation. The media carries no boot file, so the firmware creates no boot
 option for it and the boot order is exactly what it would have been without it.
 
+### Windows driver media is generated, not redistributed
+
+Windows Setup has no driver for the virtio network device and no useful display
+driver for the Arm64 `virtio-gpu`. Macport builds a second USB CD-ROM, **Macport
+Tools**, from a user-supplied `virtio-win` ISO: it stages only the Arm64 driver
+trees and writes an `autounattend.xml` whose `<DriverPaths>` point at them. The
+Tools disc carries the answer file when it is present, so the standalone FAT16
+answer media is only the fallback. Macport never downloads or ships Microsoft's
+signed driver package by itself; when no source ISO is available it writes
+`tools-media-warning.txt` and the UI shows the exact path it looked for. This is
+the driver media the install needs to finish with networking and a resizable
+display.
+
+## Process model and control plane
+
+QEMU is never run in the GUI process. A QEMU machine is owned by
+`MacportVMHost`, one process per VM, and the app and `macportctl` are both clients
+of it:
+
+```
+Macport.app ─┐
+             ├─ Unix socket, NDJSON, one request/response per connection
+macportctl ──┘         │
+                       ▼
+                 MacportVMHost (one per VM, holds the bundle flock)
+                       │
+                       ▼
+                 qemu-system-aarch64 (HVF, child process)
+```
+
+Virtualization.framework machines stay in-process: VZ objects cannot be handed to
+another process, and the engine protocol already isolates the difference behind
+`VMEngine`. The registry chooses the boundary per engine, not per guest.
+
+The host writes `runtime.json` (pid, socket path, start time) into the bundle so a
+restarted app can adopt a guest that is still running. A second host for the same
+bundle is refused twice: the advisory `flock` in the bundle and a listener check
+on the socket path. The control socket lives in the per-user temporary directory,
+not the bundle, because a bundle path under Application Support exceeds the
+kernel's 104-byte Unix-socket limit.
+
+The host's main thread must remain dispatch-serviced: every control handler and
+engine call is main-actor isolated. It therefore keeps itself alive with an awaited
+continuation rather than a blocking `CFRunLoopRun`. The raw run loop answered
+malformed requests (written directly by the server queue) but never drained the
+main queue, so a valid `status` hung until timeout — found in live testing, and
+pinned by the host's readiness path.
+
+QEMU snapshots use QMP `snapshot-save`/`snapshot-load`/`snapshot-delete`, not HMP
+`savevm`. The root disk and the EFI variable store have stable block-node names,
+and the root disk is named explicitly as the VM-state target. HMP `savevm` picks
+the first writable qcow2 device implicitly; with a writable pflash varstore that
+was the 64 MiB NVRAM image, so guest RAM was compressed into the wrong file. The
+varstore is converted to qcow2 on the first start so it can participate in
+rollback; legacy raw varstores still boot.
+
 ## Bundle format
 
 A VM is a self-contained directory, which is what makes it portable:
@@ -165,14 +221,23 @@ A VM is a self-contained directory, which is what makes it portable:
 ~/Library/Application Support/Macport/VMs/
   <uuid>.macport/
     config.json          VMConfiguration — the only source of truth
-    disk.img             sparse root disk (ftruncate, not allocated)
-    efi-vars.fd          UEFI variable store — boot order and NVRAM
+    disk.qcow2           snapshot-capable root disk (new machines)
+    disk.img             legacy sparse raw root disk; still boots
+    efi-vars.qcow2       writable UEFI variable store — boot order and NVRAM
+    efi-vars.fd          legacy raw varstore, converted on first start
     answer-media.img     removable media for Setup, when one is needed
+    tools-media.iso      generated Windows driver disc, when a source ISO exists
+    tools-media-warning.txt  why the driver disc was not built
     console.log          firmware console — the first place to look when a guest
                          will not boot
     qemu.log             engine output
-    Snapshots/           reserved for engines that report `snapshots`
+    host.log             MacportVMHost readiness and lifecycle
+    runtime.json         live host pid/socket, while it runs
 ```
+
+Snapshots are internal qcow2 snapshots, so they live in the disk images rather
+than in a separate directory. `.lock` is the host's advisory lock and is not part
+of the machine's content.
 
 `config.json` is the source of truth. Nothing about a VM lives in a database or in
 `UserDefaults`; delete the file and the VM is gone, copy the directory and the VM
@@ -225,11 +290,14 @@ in an in-process engine takes the user's whole app with it.
 
 **Phase 1 — two engines and a runtime.** VM model, bundle format, engine protocol
 and registry, Virtualization.framework engine, QEMU engine with a self-contained
-runtime that installs itself on demand. *Where the work is now.*
+runtime that installs itself on demand. **Done.**
 
-**Phase 2 — interface.** SwiftUI VM library, configuration editor, live display,
-first-run install wizard with an honest capability preflight — including telling
-the user, before they start, which guest needs which engine and why.
+**Phase 2 — runtime boundary and parity core.** Per-VM background host, control
+plane, multi-VM registry with admission control, pause/resume, snapshots, clone,
+import, machine settings, menu bar extra, `macportctl` parity. **Done for the
+matrix recorded in `docs/verification/2026-10-20-phase2.md`.** The remaining
+honest gaps are listed there: a real vTPM, a live Windows driver-media install,
+and a QEMU bridged-network path.
 
 **Phase 3 — an install that finishes.** The current state is an installer that
 boots and runs; an install that completes unattended is the next milestone, and

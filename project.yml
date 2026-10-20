@@ -54,6 +54,11 @@ targets:
     dependencies:
       - target: MacportKit
         embed: false
+      # Built before the app so its executable exists for the copy phase below.
+      # It is a process, not a linked library: the app talks to it over the
+      # control socket, never by calling into it.
+      - target: MacportVMHost
+        embed: false
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.macport
       PRODUCT_NAME: Macport
@@ -79,6 +84,17 @@ targets:
         script: |
           "${SRCROOT}/scripts/vendor-runtime.sh" \
             "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+      - name: Embed MacportVMHost
+        # The host is the app's only way to keep a QEMU guest alive after quit.
+        # Missing it silently downgrades to in-process QEMU, which looks like a
+        # working machine until the window closes — so a failed copy fails the
+        # build instead.
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/embed-vm-host.sh" \
+            "${BUILT_PRODUCTS_DIR}/MacportVMHost" \
+            "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/MacOS" \
+            "${SRCROOT}/MacportVMHost/MacportVMHost.entitlements"
 
   MacportCtl:
     type: tool

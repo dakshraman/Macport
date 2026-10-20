@@ -136,7 +136,7 @@ private final class HostApplication {
     private var bundle: URL?
     private var lockDescriptor: Int32 = -1
     private var signalSources: [DispatchSourceSignal] = []
-    private var keepAliveTimer: Timer?
+    private var shutdownContinuation: CheckedContinuation<Void, Never>?
     private var isShuttingDown = false
 
     init(options: HostOptions) {
@@ -155,7 +155,7 @@ private final class HostApplication {
         }
 
         if !isShuttingDown {
-            serve()
+            await serve()
         }
         await shutdown()
         return 0
@@ -297,19 +297,24 @@ private final class HostApplication {
 
     // MARK: Run loop
 
-    private func serve() {
-        // A hosted VM's work happens in QEMU and on the control queue; the main
-        // run loop exists to service signals and `shutdownHost`. The timer keeps
-        // CFRunLoopRun from returning immediately on a Mac with no other main
-        // run loop sources.
-        keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in }
-        CFRunLoopRun()
+    /// Suspend the async entry point until shutdown is requested.
+    ///
+    /// The host must not block the main thread in `CFRunLoopRun`: the control
+    /// handler and every engine call are main-actor isolated, and a raw run loop
+    /// does not drain the main dispatch queue. An awaited continuation keeps the
+    /// process alive *and* leaves the main queue serviced, which is what makes
+    /// `status` answer while QEMU runs in a child process.
+    private func serve() async {
+        await withCheckedContinuation { continuation in
+            shutdownContinuation = continuation
+        }
     }
 
     private func requestShutdown() {
         guard !isShuttingDown else { return }
         isShuttingDown = true
-        CFRunLoopStop(CFRunLoopGetMain())
+        shutdownContinuation?.resume()
+        shutdownContinuation = nil
     }
 
     // MARK: Control commands
@@ -400,9 +405,6 @@ private final class HostApplication {
     // MARK: Shutdown
 
     private func shutdown() async {
-        keepAliveTimer?.invalidate()
-        keepAliveTimer = nil
-
         // The engine needs no `if let`: `stopEngine` is a no-op once it is gone.
         try? await stopEngine(graceful: true, timeout: 10)
 

@@ -284,7 +284,7 @@ condition is resolved.
 
 ### C8 `RuntimeRow`
 Used in the sidebar footer and the Runtime panel: status dot · component name · version in
-mono · trailing size ("167 MB"). States: `ready`, `not installed`, `installing` (with inline
+mono · trailing size ("199 MB"). States: `ready`, `not installed`, `installing` (with inline
 `ProgressView` and current stage line), `needs repair` (verify failed → **Reinstall**).
 
 ### C9 `ConsoleBar`
@@ -482,13 +482,13 @@ media, location) + **What to expect** — the honesty block:
    automatically, so that screen will not stop the install.
 ⚠  Windows on Arm runs x86 software through Microsoft's Prism translation. Macport
    cannot make those programs native — no architecture can.
-◉  QEMU runtime 11.1.2 — not installed. Macport installs it (167 MB) during setup.
+◉  QEMU runtime 11.1.2 — not installed. Macport installs it (199 MB) during setup.
 ```
 Primary button: **Create** (or **Create & Start** when the runtime is ready).
 
 ### S7 Runtime panel (sheet, 560 × 520)
 
-`RuntimeRow` for the component (QEMU 11.1.2 · 167 MB · Ready / Not installed / Needs repair) ·
+`RuntimeRow` for the component (QEMU 11.1.2 · 199 MB · Ready / Not installed / Needs repair) ·
 `KeyValueGrid` of facts (location in `mono`, contents "2 executables · 28 libraries · 61 data
 files", signed "ad-hoc, hypervisor entitlement", source "vendored by Macport — Homebrew not
 required") · actions **Install… / Verify / Reinstall… / Reveal** · `LogView` for install output
@@ -617,7 +617,7 @@ does not have focus), and releases it on ⌃⌘C, Escape, or window deactivation
 - **Labels.** Icon-only controls (`ConsoleBar` items, sidebar toggle, overflow) get
   `accessibilityLabel` + `.help()`.
 - **Values.** `CapacityBar` exposes "6 of 12 cores, 50 percent"; `StatusPill` exposes
-  "State: Running"; `RuntimeRow` exposes "QEMU 11.1.2, ready, 167 MB".
+  "State: Running"; `RuntimeRow` exposes "QEMU 11.1.2, ready, 199 MB".
 - **VoiceOver order.** Dashboard reading order is header → primary action → Hardware → Engine →
   Storage → Install media → Networking → Activity; cards are labelled groups
   (`accessibilityElement(children: .contain)`).
@@ -644,7 +644,7 @@ happened and the next step; machine facts in monospace; never market a limitatio
 | Start, second VM | "Stop the running virtual machine first. Macport runs one at a time." | "Ubuntu Test is running. Shut it down and start Windows 11?" with [Shut Down & Start] |
 | Empty state | "No virtual machine selected" | "No machine selected" + library table (S2) or drop zone (S1) |
 | Engine unavailable | "The Virtualization.framework engine is not available on this Mac." | "Virtualization.framework is not available on this Mac, so Linux and macOS machines cannot start here." |
-| Runtime | "Not installed" alone | "QEMU runtime is not installed. Macport installs it for you — 167 MB, about a minute." |
+| Runtime | "Not installed" alone | "QEMU runtime is not installed. Macport installs it for you — 199 MB, about a minute." |
 | Delete | "Delete…" | "Move to Trash" (default) / "Delete immediately" |
 
 Terminology, fixed: **machine** (not "VM") in user-facing copy, **guest** only inside the

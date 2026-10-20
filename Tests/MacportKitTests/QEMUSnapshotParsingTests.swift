@@ -68,6 +68,36 @@ final class QEMUSnapshotParsingTests: XCTestCase {
         XCTAssertNil(QEMUEngine.resolveDisk(in: bundle))
     }
 
+    func testResolveVarsPrefersSnapshotCapableQcow2() throws {
+        let bundle = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: bundle) }
+
+        try Data("legacy raw nvram".utf8).write(to: bundle.appendingPathComponent("efi-vars.fd"))
+        try Data([0x51, 0x46, 0x49, 0xFB]).write(to: bundle.appendingPathComponent("efi-vars.qcow2"))
+
+        let vars = try XCTUnwrap(QEMUEngine.resolveVars(in: bundle))
+        XCTAssertEqual(vars.url.lastPathComponent, "efi-vars.qcow2")
+        XCTAssertEqual(vars.format, .qcow2)
+    }
+
+    func testResolveVarsFallsBackToLegacyRawStore() throws {
+        let bundle = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: bundle) }
+
+        try Data("legacy raw nvram".utf8).write(to: bundle.appendingPathComponent("efi-vars.fd"))
+
+        let vars = try XCTUnwrap(QEMUEngine.resolveVars(in: bundle))
+        XCTAssertEqual(vars.url.lastPathComponent, "efi-vars.fd")
+        XCTAssertEqual(vars.format, .raw)
+    }
+
+    func testResolveVarsReturnsNilWhenThereIsNoStore() throws {
+        let bundle = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: bundle) }
+
+        XCTAssertNil(QEMUEngine.resolveVars(in: bundle))
+    }
+
     // MARK: - Snapshot name sanitising
 
     func testSanitizeReplacesIllegalCharacters() {

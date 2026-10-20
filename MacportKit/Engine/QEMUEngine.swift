@@ -155,16 +155,43 @@ public final class QEMUEngine: NSObject, VMEngine {
         // It has to be per-VM and writable. A read-only store means the firmware
         // cannot record a boot order, so every boot would fall back to the
         // installer and the installed system would never start.
+        //
+        // It is qcow2, not raw, because a writable pflash device backed by a
+        // format without snapshots cannot participate in a VM snapshot. The
+        // older `savevm` path failed with "Device 'pflash1' is writable but does
+        // not support snapshots"; QMP `snapshot-save` needs a snapshot-capable
+        // node too. Existing bundles keep their NVRAM: the raw image is
+        // converted, not discarded.
         let vars = bundle.appendingPathComponent(Self.varsFileName)
         if !fm.fileExists(atPath: vars.path) {
-            if let template = firmware.varsTemplate {
-                try fm.copyItem(at: template, to: vars)
-            } else {
-                guard fm.createFile(atPath: vars.path, contents: nil) else {
-                    throw EngineError.operationFailed("Could not create \(vars.path).")
+            let legacyVars = bundle.appendingPathComponent(Self.legacyVarsFileName)
+            if fm.fileExists(atPath: legacyVars.path) {
+                try await Self.convertVars(from: legacyVars, to: vars, tool: tool)
+                try? fm.removeItem(at: legacyVars)
+            } else if let template = firmware.varsTemplate {
+                try await Self.convertVars(from: template, to: vars, tool: tool)
+            } else if let qemuImg = tool.imageBinary {
+                let result = await Self.runOffMainThread {
+                    Self.runBlocking(
+                        qemuImg,
+                        ["create", "-f", "qcow2", vars.path,
+                         String(Self.defaultVariableStoreBytes)]
+                    )
                 }
-                // Zero-filled is equivalent to factory-fresh NVRAM.
-                let handle = try FileHandle(forWritingTo: vars)
+                guard result.status == 0 else {
+                    throw EngineError.operationFailed(
+                        "Could not create the EFI variable store at \(vars.path): "
+                            + result.output
+                    )
+                }
+            } else {
+                // A runtime without qemu-img is unusual. Boot anyway with a raw
+                // store rather than refusing the machine; snapshots will report
+                // their own actionable error.
+                guard fm.createFile(atPath: legacyVars.path, contents: nil) else {
+                    throw EngineError.operationFailed("Could not create \(legacyVars.path).")
+                }
+                let handle = try FileHandle(forWritingTo: legacyVars)
                 try handle.truncate(atOffset: Self.defaultVariableStoreBytes)
                 try handle.close()
             }
@@ -499,11 +526,11 @@ public final class QEMUEngine: NSObject, VMEngine {
         state = .running
     }
 
-    /// The snapshots QEMU holds for this machine's disk.
+    /// The snapshots QEMU holds for this machine's root disk.
     ///
-    /// QMP's own `query-snapshots` is tried first; the human monitor's
-    /// `info snapshots` table is the fallback, because not every QEMU build
-    /// answers the former and every build prints the latter.
+    /// The root node's `query-block` entry is authoritative; the human monitor's
+    /// `info snapshots` table is the fallback for builds that do not name the
+    /// node the same way.
     public func listMachineSnapshots() async throws -> [QEMUSnapshot] {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Snapshots")
@@ -512,13 +539,28 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     /// The snapshot table from whichever query this build answers.
     ///
-    /// QMP's `query-snapshots` is tried first; the human monitor's
-    /// `info snapshots` is the fallback, because not every QEMU build answers
-    /// the former and every build prints the latter.
+    /// `query-block` is authoritative: it reports the snapshot list of each
+    /// block node, so the root disk's table can be read even though the EFI
+    /// varstore also carries the same tags. `query-snapshots` was removed from
+    /// recent QEMU, and the human monitor's table may describe whichever device
+    /// it considers current — neither is a reliable substitute when two
+    /// devices are snapshotted together.
     nonisolated private static func listSnapshots(on channel: QMPClient) async throws -> [QEMUSnapshot] {
-        if let payload = try? await channel.execute("query-snapshots"),
-           let snapshots = parseSnapshotListQMP(payload) {
-            return snapshots
+        if let payload = try? await channel.execute("query-block"),
+           let blocks = payload.arrayValue {
+            for block in blocks {
+                guard let inserted = block["inserted"],
+                      inserted["node-name"]?.stringValue == rootNodeName else {
+                    continue
+                }
+                // The root node was found. A missing `snapshots` member means it
+                // has none; an unrecognised member shape is not the same thing,
+                // and falls through to the human-monitor parse.
+                guard let image = inserted["image"] else { return [] }
+                guard let snapshots = image["snapshots"] else { return [] }
+                if let parsed = parseSnapshotListQMP(snapshots) { return parsed }
+                break
+            }
         }
 
         let text = try await humanMonitor("info snapshots", on: channel)
@@ -527,10 +569,12 @@ public final class QEMUEngine: NSObject, VMEngine {
 
     /// Take a snapshot of the machine: RAM and disk, under a stable tag.
     ///
-    /// The guest is paused for the duration. Save-state is written by the same
-    /// device-state serialiser a migration uses, and a running guest would race
-    /// it — so: stop, `savevm`, cont. A machine that was already paused stays
-    /// paused, which is what its owner asked for.
+    /// QMP's `snapshot-save` is asynchronous and writes the VM state to an
+    /// explicit block node. That explicitness matters here: HMP `savevm` picks
+    /// the first writable qcow2 device, which used to be the EFI varstore, so
+    /// 2 GiB of guest RAM was compressed into a 64 MiB NVRAM image. The root
+    /// disk is named as the state target instead, and both writable qcow2 nodes
+    /// are snapshotted together.
     ///
     /// Returns the snapshot as QEMU records it — the caller's display name is
     /// sanitised into the tag, and the pretty name belongs in the bundle index.
@@ -539,69 +583,84 @@ public final class QEMUEngine: NSObject, VMEngine {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Snapshots")
         let tag = Self.sanitizeSnapshotName(name)
-
         let wasRunning = try await machineIsRunning(on: channel)
-        if wasRunning {
-            _ = try await command("stop", context: "Could not pause the machine for a snapshot", on: channel)
-        }
+
+        let jobID = "macport-save-\(UUID().uuidString)"
         do {
-            _ = try await Self.humanMonitor("savevm \(tag)", on: channel)
+            _ = try await channel.execute(
+                "snapshot-save",
+                arguments: [
+                    "job-id": .string(jobID),
+                    "tag": .string(tag),
+                    "vmstate": .string(Self.rootNodeName),
+                    "devices": .array([
+                        .string(Self.rootNodeName),
+                        .string(Self.varsNodeName),
+                    ]),
+                ]
+            )
+            try await Self.waitForSnapshotJob(jobID, operation: "save", on: channel)
         } catch {
             // Leave the machine as it was found, even though the save failed.
             if wasRunning { _ = try? await channel.execute("cont") }
-            throw error
-        }
-        if wasRunning {
-            _ = try await command("cont", context: "Could not resume the machine after a snapshot", on: channel)
+            throw Self.engineError(from: error, operation: "Could not take the snapshot")
         }
 
-        if let fresh = try? await listMachineSnapshots(),
-           let match = fresh.first(where: { $0.id == tag }) {
-            return match
+        try await restoreRunState(
+            wasRunning: wasRunning,
+            channel: channel
+        )
+        state = wasRunning ? .running : .paused
+
+        let fresh = try await Self.listSnapshots(on: channel)
+        guard let match = fresh.first(where: { $0.id == tag }) else {
+            throw EngineError.operationFailed(
+                "QEMU finished the snapshot job but did not record “\(tag)”."
+            )
         }
-        // A snapshot that saved without error is real even when the listing
-        // has not caught up (some builds lag one poll behind).
-        return QEMUSnapshot(id: tag, name: tag, createdAt: Date(), includesMemory: true)
+        return match
     }
 
     /// Restore the machine to a snapshot's RAM and disk state.
     ///
-    /// `loadvm` replaces device state as well as memory, so the machine is
-    /// paused around it and left in the state the caller found it in: running
-    /// stays running, paused stays paused. The end state `loadvm` leaves behind
-    /// is build-dependent, so it is corrected explicitly rather than trusted.
+    /// `snapshot-load` replaces device state as well as memory. QEMU pauses and
+    /// resumes the guest itself as part of the job, but the end state is still
+    /// corrected explicitly: a machine that was paused before the restore must
+    /// not come back running.
     public func restoreMachineSnapshot(id: String) async throws {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Restore")
         let tag = Self.sanitizeSnapshotName(id)
-
         let wasRunning = try await machineIsRunning(on: channel)
-        if wasRunning {
-            _ = try await command("stop", context: "Could not pause the machine for a restore", on: channel)
-        }
+
+        let jobID = "macport-load-\(UUID().uuidString)"
         do {
-            _ = try await Self.humanMonitor("loadvm \(tag)", on: channel)
+            _ = try await channel.execute(
+                "snapshot-load",
+                arguments: [
+                    "job-id": .string(jobID),
+                    "tag": .string(tag),
+                    "vmstate": .string(Self.rootNodeName),
+                    "devices": .array([
+                        .string(Self.rootNodeName),
+                        .string(Self.varsNodeName),
+                    ]),
+                ]
+            )
+            try await Self.waitForSnapshotJob(jobID, operation: "restore", on: channel)
         } catch {
             if wasRunning { _ = try? await channel.execute("cont") }
-            throw error
+            throw Self.engineError(from: error, operation: "Could not restore the snapshot")
         }
 
-        let runningNow = try await machineIsRunning(on: channel)
-        if wasRunning && !runningNow {
-            _ = try await command("cont", context: "Could not resume the machine after a restore", on: channel)
-        } else if !wasRunning && runningNow {
-            _ = try await command("stop", context: "Could not pause the machine after a restore", on: channel)
-        }
+        try await restoreRunState(wasRunning: wasRunning, channel: channel)
         state = wasRunning ? .running : .paused
     }
 
-    /// Delete a snapshot. Safe while the guest runs: `delvm` only touches the
-    /// image, and QEMU refuses if the snapshot is the machine's current state.
+    /// Delete a snapshot from every writable node that carries it.
     ///
-    /// QEMU 11 answers `delvm` for a tag that does not exist with an empty
-    /// success reply, so existence is checked against the listing first: a
-    /// caller deleting a snapshot the machine does not have gets an error, not
-    /// a false success.
+    /// Existence is checked against the listing first: a caller deleting a
+    /// snapshot the machine does not have gets an error, not a false success.
     public func deleteMachineSnapshot(id: String) async throws {
         try ensureSnapshotsSupported()
         let channel = try controlChannel(for: "Delete snapshot")
@@ -611,7 +670,91 @@ public final class QEMUEngine: NSObject, VMEngine {
         guard snapshots.contains(where: { $0.id == tag }) else {
             throw EngineError.operationFailed("There is no snapshot named “\(tag)” to delete.")
         }
-        _ = try await Self.humanMonitor("delvm \(tag)", on: channel)
+
+        let jobID = "macport-delete-\(UUID().uuidString)"
+        do {
+            _ = try await channel.execute(
+                "snapshot-delete",
+                arguments: [
+                    "job-id": .string(jobID),
+                    "tag": .string(tag),
+                    "devices": .array([
+                        .string(Self.rootNodeName),
+                        .string(Self.varsNodeName),
+                    ]),
+                ]
+            )
+            try await Self.waitForSnapshotJob(jobID, operation: "delete", on: channel)
+        } catch {
+            throw Self.engineError(from: error, operation: "Could not delete the snapshot")
+        }
+
+        let after = try await Self.listSnapshots(on: channel)
+        guard !after.contains(where: { $0.id == tag }) else {
+            throw EngineError.operationFailed(
+                "QEMU reported the delete job finished, but “\(tag)” is still listed."
+            )
+        }
+    }
+
+    /// Wait for a snapshot job to conclude, and surface QEMU's own error.
+    ///
+    /// Snapshot jobs auto-dismiss on completion in some builds, so a job that
+    /// has disappeared is not itself a failure: the caller verifies the
+    /// snapshot table afterwards. A `concluded` job carrying an error is a
+    /// failure and its text is preserved.
+    nonisolated private static func waitForSnapshotJob(
+        _ jobID: String,
+        operation: String,
+        on channel: QMPClient
+    ) async throws {
+        let deadline = Date().addingTimeInterval(120)
+        while Date() < deadline {
+            let payload = try await channel.execute("query-jobs")
+            let jobs = payload.arrayValue ?? []
+            guard let job = jobs.first(where: { $0["id"]?.stringValue == jobID }) else {
+                return
+            }
+            let status = job["status"]?.stringValue ?? ""
+            if status == "concluded" {
+                if let error = job["error"]?.stringValue, !error.isEmpty {
+                    throw EngineError.operationFailed(
+                        "QEMU could not \(operation) the snapshot: \(error)"
+                    )
+                }
+                _ = try? await channel.execute(
+                    "job-dismiss",
+                    arguments: ["id": .string(jobID)]
+                )
+                return
+            }
+            if status == "null" { return }
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        throw EngineError.operationFailed(
+            "QEMU did not finish the snapshot \(operation) job within two minutes."
+        )
+    }
+
+    /// Put the guest back into the run state the caller found.
+    private func restoreRunState(
+        wasRunning: Bool,
+        channel: QMPClient
+    ) async throws {
+        let runningNow = try await machineIsRunning(on: channel)
+        if wasRunning && !runningNow {
+            _ = try await command(
+                "cont",
+                context: "Could not resume the machine after a snapshot operation",
+                on: channel
+            )
+        } else if !wasRunning && runningNow {
+            _ = try await command(
+                "stop",
+                context: "Could not pause the machine after a snapshot operation",
+                on: channel
+            )
+        }
     }
 
     // MARK: - VMEngine v2 bridge
@@ -775,6 +918,16 @@ public final class QEMUEngine: NSObject, VMEngine {
         guard disk.format == .qcow2 else {
             throw Self.snapshotUnsupportedError(diskPath: disk.url.path)
         }
+        // The varstore is writable, so leaving it raw makes QEMU fail the
+        // snapshot after the user has already waited for the job to start.
+        // `create` converts it on the next start; say so here.
+        if let vars = Self.resolveVars(in: bundlePath), vars.format != .qcow2 {
+            throw EngineError.operationFailed(
+                "This machine's EFI variable store is still a raw image, so it "
+                    + "cannot be snapshotted. Stop and start the machine once to "
+                    + "convert it, then try again."
+            )
+        }
     }
 
     /// The error a snapshot attempt on a raw disk produces.
@@ -799,6 +952,26 @@ public final class QEMUEngine: NSObject, VMEngine {
         let fileManager = FileManager.default
         let qcow = bundle.appendingPathComponent(qcowDiskFileName)
         let raw = bundle.appendingPathComponent(diskFileName)
+        let candidate: URL
+        if fileManager.fileExists(atPath: qcow.path) {
+            candidate = qcow
+        } else if fileManager.fileExists(atPath: raw.path) {
+            candidate = raw
+        } else {
+            return nil
+        }
+        return DiskImage(url: candidate, format: diskFormat(at: candidate) ?? .raw)
+    }
+
+    /// The machine's writable EFI variable store, if one exists.
+    ///
+    /// New bundles use `efi-vars.qcow2`; a bundle that has not been started
+    /// since the conversion may still carry the legacy raw file. The format is
+    /// read from the header, not guessed from the name.
+    nonisolated static func resolveVars(in bundle: URL) -> DiskImage? {
+        let fileManager = FileManager.default
+        let qcow = bundle.appendingPathComponent(varsFileName)
+        let raw = bundle.appendingPathComponent(legacyVarsFileName)
         let candidate: URL
         if fileManager.fileExists(atPath: qcow.path) {
             candidate = qcow
@@ -851,6 +1024,38 @@ public final class QEMUEngine: NSObject, VMEngine {
         let handle = try FileHandle(forWritingTo: disk)
         try handle.truncate(atOffset: config.diskBytes)
         try handle.close()
+    }
+
+    /// Convert the firmware template or a legacy raw varstore into qcow2.
+    ///
+    /// pflash is writable, and QEMU will not include a writable device in an
+    /// internal snapshot unless its format supports snapshots. qcow2 is that
+    /// format (and the only one that lets the varstore participate in rollback
+    /// at all). The conversion is a one-time, 64 MiB operation per bundle.
+    nonisolated private static func convertVars(
+        from source: URL,
+        to destination: URL,
+        tool: QEMURuntime.Tool
+    ) async throws {
+        guard let qemuImg = tool.imageBinary else {
+            throw EngineError.runtimeMissing(
+                engine: "QEMU",
+                detail: "qemu-img is needed to prepare the EFI variable store."
+            )
+        }
+        let result = await runOffMainThread {
+            runBlocking(
+                qemuImg,
+                ["convert", "-f", "raw", "-O", "qcow2", source.path, destination.path]
+            )
+        }
+        guard result.status == 0 else {
+            try? FileManager.default.removeItem(at: destination)
+            throw EngineError.operationFailed(
+                "Could not prepare the EFI variable store at \(destination.path): "
+                    + result.output
+            )
+        }
     }
 
     /// Run a purely synchronous helper off the main actor.
@@ -1041,7 +1246,17 @@ public final class QEMUEngine: NSObject, VMEngine {
     /// create one. Old bundles keep `disk.img`; the header, not the name,
     /// decides how either is opened.
     nonisolated private static let qcowDiskFileName = "disk.qcow2"
-    nonisolated private static let varsFileName = "efi-vars.fd"
+    nonisolated private static let varsFileName = "efi-vars.qcow2"
+    /// Pre-qcow2 bundles stored the variable store raw under this name.
+    nonisolated private static let legacyVarsFileName = "efi-vars.fd"
+    /// Stable block-node names for QMP's `snapshot-save`/`snapshot-load`.
+    ///
+    /// These are deliberately not the drive ids: QEMU keeps backend ids and
+    /// graph node names in separate namespaces, and snapshot commands address
+    /// the graph node. Being explicit keeps the monitor commands independent of
+    /// QEMU's `#blockNNN` auto-naming, which changes with topology.
+    nonisolated private static let rootNodeName = "macport-root"
+    nonisolated private static let varsNodeName = "macport-vars"
     nonisolated private static let logFileName = "qemu.log"
     nonisolated private static let consoleFileName = "console.log"
     /// The removable disk carrying Setup's answer file, when one is needed.
@@ -1167,11 +1382,16 @@ public final class QEMUEngine: NSObject, VMEngine {
         args += ["-rtc", "base=localtime,clock=host"]
 
         // UEFI firmware. Code is read-only and shared; the variable store is this
-        // VM's own writable copy.
+        // VM's own writable copy. Its format follows what is actually on disk:
+        // new bundles convert the template to qcow2 so it can be snapshotted,
+        // old bundles keep booting the raw file until `create` migrates them.
         args += ["-drive", "if=pflash,format=raw,readonly=on,file=\(firmware.code.path)"]
+        let vars = resolveVars(in: bundle)
+        let varsPath = vars?.url ?? bundle.appendingPathComponent(legacyVarsFileName)
+        let varsFormat = vars?.format.rawValue ?? DiskFormat.raw.rawValue
         args += [
             "-drive",
-            "if=pflash,format=raw,file=\(bundle.appendingPathComponent(varsFileName).path)",
+            "if=pflash,format=\(varsFormat),node-name=\(varsNodeName),file=\(varsPath.path)",
         ]
         // Point QEMU at its own data directory. A relocated runtime cannot rely on a
         // compiled-in prefix, so without this QEMU would look for firmware, keymaps
@@ -1226,7 +1446,7 @@ public final class QEMUEngine: NSObject, VMEngine {
         args += ["-device", "nvme,serial=macport,drive=rootdisk"]
         args += [
             "-drive",
-            "if=none,id=rootdisk,format=\(diskFormat),file=\(diskPath)",
+            "if=none,id=rootdisk,node-name=\(rootNodeName),format=\(diskFormat),file=\(diskPath)",
         ]
 
         // Installer media as a **real SCSI CD-ROM carried over USB**.
@@ -1299,7 +1519,7 @@ public final class QEMUEngine: NSObject, VMEngine {
         if let answerMedia {
             args += [
                 "-drive",
-                "if=none,id=answer,format=raw,file=\(answerMedia.path)",
+                "if=none,id=answer,format=raw,readonly=on,file=\(answerMedia.path)",
             ]
             args += [
                 "-device",

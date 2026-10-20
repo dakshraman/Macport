@@ -36,17 +36,22 @@ product itself has no price and no gate.
 | Ubuntu ARM64 boot to desktop | **Working**, console embedded in the app window |
 | Windows 11 Setup boot from ISO | **Working** — optical USB transport, firmware boot prompt answered automatically |
 | TPM 2.0 compatibility screen bypassed | **Working** — Macport generates the setup answer media itself (no Shift-F10, no registry edit) |
-| Vendored, self-managed QEMU runtime | **Working** — 167 MB, re-signed, no Homebrew, no system install |
-| Capability truth surfaced in UI | **Designed** — engine chips, capability rows with consequences, problem cards |
-| CLI (`macportctl`) | **Working** — list/create/start/stop |
-| Single machine at a time | **Deliberate v1 limit** — must be lifted for parity (§7) |
+| Vendored, self-managed QEMU runtime | **Working** — 199 MB, re-signed, no Homebrew, no system install |
+| Per-VM background host + control plane | **Working** — QEMU survives app quit; app and CLI drive it over a Unix socket |
+| Multi-VM runtime and admission control | **Working** |
+| Pause/resume, snapshots with RAM + disk rollback | **Working for QEMU qcow2 machines** |
+| Clone, disk import, machine settings, menu bar | **Working** |
+| Capability truth surfaced in UI | **Working** — engine chips, capability rows with consequences, problem cards |
+| CLI (`macportctl`) | **Working** — lifecycle, pause/resume, snapshots, clone/import, status JSON |
+| Multiple machines at a time | **Working** — per-VM host process, capacity bars and admission control |
 
 ---
 
 ## 3. Feature matrix
 
-Legend — **Now** = exists · **Next** = Phase 2 (parity core) · **Later** = Phase 3/4 · **No** = not
-achievable with the current platform, with the reason stated · **Engine** = which engine delivers it.
+Legend — **Now** = exists · **Next** = open gap, scheduled after the Phase 2 core · **Later** =
+Phase 3/4 · **No** = not achievable with the current platform, with the reason stated · **Engine** =
+which engine delivers it.
 
 ### 3.1 Machines and lifecycle
 
@@ -54,14 +59,14 @@ achievable with the current platform, with the reason stated · **Engine** = whi
 |---|---|---|---|---|
 | Create a VM from an ISO through a wizard | Yes | Yes (design complete) | Next | Both |
 | Start / shut down / force off | Yes | Yes | Now | Both |
-| Suspend and resume *in memory* (pause) | Yes | Not yet | **Next** | VZ `pause/resume`; QEMU `stop/cont` via QMP |
-| Suspend to disk (save state across app quit) | Yes | Not yet | **Next** | QEMU `savevm` on qcow2 only; VZ has no save-state API — VZ guests get pause, not suspend-to-disk |
-| Multiple machines running at once | Yes | No (v1) | **Next** | Requires `AppState` keyed by VM id, one engine instance per VM, memory admission control |
-| Clone / duplicate a machine | Yes | No | **Next** | APFS `clonefile` of the bundle when off — instant, copy-on-write, near-zero disk |
-| Snapshots with rollback | Yes (Pro) | No | **Next** | QEMU qcow2 internal snapshots (disk + RAM). VZ exposes no snapshot API → VZ guests show “Not available on this engine” |
+| Suspend and resume *in memory* (pause) | Yes | **Working** | Now | VZ `pause/resume`; QEMU `stop/cont` via QMP |
+| Suspend to disk (save state across app quit) | Yes | **Partial** — snapshot/restore, not automatic | Later | QEMU `snapshot-save` on qcow2; VZ has no save-state API — VZ guests get pause, not suspend-to-disk |
+| Multiple machines running at once | Yes | **Working** | Now | Registry keyed by VM id, one host per QEMU machine, memory admission control |
+| Clone / duplicate a machine | Yes | **Working** | Now | APFS `clonefile` of the bundle when off — instant, copy-on-write, near-zero disk |
+| Snapshots with rollback | Yes (Pro) | **Working** (QEMU qcow2) | Now | QMP `snapshot-save`/`snapshot-load`/`snapshot-delete`; disk + RAM + EFI vars. VZ exposes no snapshot API → “Not available on this engine” |
 | Automatic snapshots before risky operations | Yes | No | Later | Policy on top of the QEMU snapshot primitive |
-| Import existing VMs (Parallels/VMware/VirtualBox/OVA) | Yes | No | **Next** | Vendored `qemu-img convert` (vmdk/vdi/vhdx/qcow2/ova) → raw for VZ, qcow2 for QEMU; guest inferred from disk labels |
-| Headless / background run | Yes | No | Later | QEMU `-display none` + QMP; VZ can run without a view |
+| Import existing VMs (Parallels/VMware/VirtualBox/OVA) | Yes | **Working** | Now | Vendored `qemu-img convert` (vmdk/vdi/vhdx/qcow2/ova); OVA unpack and format inspection |
+| Headless / background run | Yes | **Working (QEMU)** | Now | Background host persists after app quit; `MACPORT_QEMU_DISPLAY=none` for headless verification. VZ remains in-process |
 | Start at login | Yes | No | Later | `SMAppService` login item + a “start these machines” list |
 | Encrypted VM storage | Yes (Pro) | No | Later | qcow2 LUKS for QEMU; APFS-encrypted bundle for VZ is a separate design |
 
@@ -69,14 +74,14 @@ achievable with the current platform, with the reason stated · **Engine** = whi
 
 | Capability | Parallels | Macport | Plan | Engine / note |
 |---|---|---|---|---|
-| CPU / memory editing after creation | Yes | No (create only) | **Next** | Hot-add where the engine allows; otherwise “shut down to apply” |
+| CPU / memory editing after creation | Yes | **Working** — settings sheet, applies after restart | Now | Validated against host capacity; no hot-add |
 | Disk resize (grow) | Yes | No | **Next** | `truncate`/`qemu-img resize` + guest partition guidance |
-| Boot order | Yes | No | **Next** | QEMU `-boot order=`; VZ boot loader selection |
-| EFI / Secure Boot control | Yes | Partial | Next | EDK2 vars already per-VM; expose Secure Boot toggle where meaningful |
+| Boot order | Yes | **Partial** — install media vs disk-only in settings | Next | QEMU `-boot order=`; VZ boot loader selection |
+| EFI / Secure Boot control | Yes | Partial | Next | EDK2 vars already per-VM; Secure Boot toggle not exposed |
 | Virtual TPM 2.0 | Yes | **No** — answer file works around it | **Next** | Vendor `swtpm` (LGPL, ~1 MB) and expose a real vTPM. Removes the setup bypass entirely and enables BitLocker |
 | Nested virtualisation | Limited | No | Later | VZ declares it where the host allows; QEMU `-cpu host` needs entitlement work |
 | Per-VM display scaling / resolution | Yes | Fixed 800×600 on Windows | **Next** | Install the `virtio-gpu` Arm64 driver from Macport Tools during Setup → dynamic resolution + no custom firmware. VZ Linux already resizes |
-| Shared folders | Yes | Engine capability declared, no UI | **Next** | VZ `VZSharedDirectory` (virtiofs) for Linux/macOS; QEMU virtiofs/9p + `viofs` driver for Windows |
+| Shared folders | Yes | **Working for VZ guests** — settings sheet, read-only flag; QEMU not yet | Now / Later | VZ `VZSharedDirectory` (virtiofs) for Linux/macOS; QEMU virtiofs/9p + `viofs` driver for Windows |
 | USB passthrough | Yes (USB 3) | Declared unsupported | Later | QEMU `usb-host` if the build has libusb; VZ only exposes USB mass storage |
 | Shared clipboard | Yes | No | **Next** | Needs a guest agent (§3.4). VZ has no public clipboard API, so the agent is the portable answer |
 | Drag and drop between host and guest | Yes | No | Later | Same agent channel as clipboard |
@@ -109,7 +114,7 @@ Tools**: a small, signed agent for Linux and Windows, transported over virtio-se
 | Time sync | UTC only | Continuous | Next |
 | Graceful shutdown request | ACPI | ACPI + guest ack | Next |
 | Battery / resource reporting | Host-side only | Guest load shown in dashboard | Later |
-| Windows drivers (virtio-net, virtio-gpu, viofs, balloon) | Device invisible | Installed from Macport Tools during Setup via `DriverPaths` in the answer file | **Next — highest leverage item** |
+| Windows drivers (virtio-net, virtio-gpu, viofs, balloon) | Device invisible | Installed from Macport Tools during Setup via `DriverPaths` in the answer file | **Built; live install unverified** |
 
 The driver pack is the single biggest upgrade available: attaching it to the answer media during
 Setup gives Windows a network device, a resizable display and shared folders **without** a custom
@@ -136,10 +141,10 @@ available; QEMU bridged is not promised.
 
 | Capability | Parallels | Macport | Plan | Engine / note |
 |---|---|---|---|---|
-| CLI for every operation | Pro only | `macportctl` exists, partial | **Next** | Grow to parity: snapshot, clone, import, config, status JSON |
-| Scripting / JSON output | Pro | No | Next | Stable JSON schema, documented |
+| CLI for every operation | Pro only | **Working** — status/start/stop/pause/resume/snapshots/restore/delete-snapshot/clone/import/delete/disk convert/host-path | Now | `status --json` is stable; other commands emit human-readable text |
+| Scripting / JSON output | Pro | **Partial** — `status --json` | Next | Extend JSON to list/snapshots before calling the schema stable |
 | Resource monitor (CPU/RAM per VM) | Yes | No | **Next** | `proc_pid_rusage` on the engine process; host counters for the capacity bars |
-| Menu bar extra | Yes | No | Later | VM list, start/stop, running count |
+| Menu bar extra | Yes | **Working** — running count, per-VM start/stop, open app | Now | Menu bar scene in the SwiftUI app |
 | Logs and diagnostics in the UI | Buried | Designed | Now | Problem cards + log sheet are already the design's backbone |
 | Time Machine-friendly storage | Yes | Yes | Now | Bundles are ordinary folders; no proprietary container |
 | Portable / movable machines | Yes | Yes (by design) | Now | One `.macport` folder holds disk, firmware vars and config |
@@ -173,8 +178,9 @@ available; QEMU bridged is not promised.
 6. **Automation is free.** CLI and JSON output in the base product, not a Pro SKU.
 7. **Self-diagnosis.** Problem cards quote the exact firmware or engine line that failed, with a
    copyable log. This is already the design's centre of gravity.
-8. **x86 emulation option (experimental).** QEMU TCG can run guests Parallels structurally cannot.
-   Slow, clearly labelled, off by default — but it exists.
+8. **x86 emulation option (experimental, not shipped).** QEMU TCG can run guests Parallels
+   structurally cannot; Macport's current QEMU command line is Arm64/HVF only, so this remains a
+   designed experiment, not a promise.
 9. **Instant clones.** APFS copy-on-write makes duplicating an 80 GB machine near-instant and
    near-free on disk — better than the copy-based clone users expect.
 10. **No account, no telemetry, no network requirement.** The app never phones home.
@@ -196,21 +202,32 @@ available; QEMU bridged is not promised.
 
 ## 6. Roadmap
 
-### Phase 2 — parity core (the next build)
-Ordered by user-visible value per unit of risk.
+### Phase 2 — parity core (shipped, with named gaps)
+The runtime boundary and all engine primitives are in place. Status from the
+2026-10-20 verification pass:
 
-1. **Windows driver pack + answer-file integration** → network device, resizable display, shared
-   folders path. (Removes the two biggest Windows gaps in one stroke.)
-2. **Multi-VM runtime** → several machines running, admission control, per-VM engine instances.
-3. **Pause/resume + suspend-to-disk where supported** (QEMU), pause for VZ.
-4. **Snapshots** (QEMU) with a timeline UI and clone-before-risky-operation prompt.
-5. **Clone/duplicate** via APFS clonefile, with an explicit “this is instant because the disk is
-   copy-on-write” note.
-6. **Machine settings UI** (CPU/RAM/disk/boot/network/devices) with “applies after restart” states.
-7. **vTPM via bundled `swtpm`** → Windows 11 without the answer-file bypass; BitLocker becomes possible.
-8. **CLI parity + JSON** for every one of the above.
-9. **Menu bar extra** and login-item autostart.
-10. **Import** (`qemu-img`) for qcow2/vmdk/vdi/vhdx/ova.
+1. **Windows driver pack + answer-file integration** — builder, `DriverPaths`, second USB CD and
+   UI warning are done; a live Windows install with the driver ISO is **not yet verified** because
+   no `virtio-win.iso` is present on the test machine.
+2. **Multi-VM runtime** — done: per-VM host, admission control, registry.
+3. **Pause/resume** — done for both engines; suspend-to-disk is available as QEMU snapshot/restore,
+   not as an automatic “save on quit”.
+4. **Snapshots** — done for QEMU qcow2: RAM, disk and EFI vars, with snapshot sheet and CLI.
+5. **Clone/duplicate** — done via APFS clonefile.
+6. **Machine settings UI** — done for CPU/RAM/network/shared folders/boot, with restart-to-apply.
+   Disk growth and Secure Boot remain open.
+7. **vTPM via bundled `swtpm`** — **not done**; the answer-file bypass remains.
+8. **CLI parity** — done for the lifecycle and snapshot surface; JSON is stable for `status` only.
+9. **Menu bar extra** — done. Login-item autostart remains open.
+10. **Import** (`qemu-img`) — done for qcow2/vmdk/vdi/vhdx/ova.
+
+### Phase 2.1 — close the honest gaps
+1. Verify a Windows install with Macport Tools and a real `virtio-win` ISO; fix driver paths if the
+   live media disagrees with the generated `autounattend.xml`.
+2. Vendor `swtpm` and expose vTPM → remove the TPM bypass, enable BitLocker.
+3. Re-run the VZ Linux and Windows boot matrix on the current host after the runtime refactor.
+4. Extend JSON output to every CLI query.
+5. Disk growth, Secure Boot toggle, login-item autostart.
 
 ### Phase 3 — integration
 Macport Tools agent (Linux first, then Windows): clipboard, dynamic resolution, shared folders,
@@ -246,16 +263,16 @@ A new user can, without a terminal:
 
 ## 8. Immediate next actions
 
-1. Finish the UI design pass so the Phase 2 surfaces (snapshots, settings, multi-VM, import) have a
-   home in the interface before the engine work starts. *(in progress)*
-2. Build the Macport Tools ISO skeleton: virtio-win Arm64 drivers + `DriverPaths` answer-file entry.
-3. Refactor `AppState` from a single running VM to a registry keyed by machine id; add admission
-   control.
-4. Add `pause/resume` and snapshot primitives to `VMEngine`, with capability flags per engine.
-5. Vendor `swtpm` and wire it into `QEMUEngine` behind a capability flag.
+1. Supply a `virtio-win` ISO and run a real Windows install with Macport Tools; verify Setup sees
+   the disk and network, then record the result in `docs/verification/`.
+2. Vendor `swtpm` and expose a real vTPM behind a capability flag, removing the answer-file bypass.
+3. Re-run the VZ Ubuntu and Windows 11 boot matrix on the current build, since the Phase 2 refactor
+   touched the runtime and QEMU command line.
+4. Extend `macportctl --json` from `status` to `list` and `snapshots`, and document the schema.
+5. Add disk growth, Secure Boot control and login-item autostart.
 
-Each step is independently shippable and reviewable. The first one that changes a user's day is
-step 2: Windows with a network and a real display.
+Each is independently shippable. The first one that changes a user's day is the driver-media
+verification: Windows with networking and a usable display.
 
 ---
 

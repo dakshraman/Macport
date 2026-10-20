@@ -461,12 +461,35 @@ struct MacportCtl {
         let bundle = await store.bundleURL(for: config)
         let metadata = requireRunning(config, in: bundle)
 
-        _ = await send(.stop(graceful: !force), to: metadata, name: config.name)
+        // A graceful guest shutdown can legitimately take longer than the
+        // default one-exchange timeout: the host gives the guest up to eight
+        // seconds, then terminates QEMU and waits for it to exit. Failing here
+        // on that budget used to skip `shutdownHost` entirely, leaving a host
+        // alive with no VM and no way to start it again. The stop is best-effort
+        // on purpose — retiring the host force-stops an unresponsive engine.
+        let stopClient = VMControlClient(
+            socketPath: metadata.socketPath,
+            connectTimeout: 2,
+            commandTimeout: 25
+        )
+        do {
+            let response = try await stopClient.send(VMControlRequest(command: .stop(graceful: !force)))
+            if !response.ok {
+                FileHandle.standardError.write(
+                    Data("\(config.name): \(response.error ?? "the host refused the stop request")\n".utf8)
+                )
+            }
+        } catch {
+            FileHandle.standardError.write(
+                Data("\(config.name): \(error.localizedDescription)\n".utf8)
+            )
+        }
+
         // `stop` powers the guest off; `shutdownHost` retires the process that
         // owns it, so a later `start` is not refused by a stale lock.
         await shutdownHost(metadata)
 
-        let exited = await waitForExit(pid: metadata.pid, timeout: 10)
+        let exited = await waitForExit(pid: metadata.pid, timeout: 20)
         if !exited && force {
             kill(metadata.pid, SIGKILL)
             _ = await waitForExit(pid: metadata.pid, timeout: 2)

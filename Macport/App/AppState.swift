@@ -103,6 +103,16 @@ final class AppState: ObservableObject {
                 "Windows on Arm runs x86 software through Microsoft's Prism translation "
                     + "layer. Macport cannot make those programs native — no architecture can."
             )
+            if MacportTools.resolve() == nil {
+                warnings.append(
+                    "Windows Setup needs the Arm64 virtio drivers on Macport Tools, but no "
+                        + "virtio-win ISO was found. Without it Windows may not see the virtio "
+                        + "network device, and the display stays at 800×600. Place "
+                        + "virtio-win-\(MacportTools.version).iso at "
+                        + "\(MacportTools.cachedISOURL.path), or set \(MacportTools.environmentOverride) "
+                        + "to a copy, then start the machine again."
+                )
+            }
         }
 
         if !caps.snapshots {

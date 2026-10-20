@@ -14,6 +14,8 @@ xcodebuild -project Macport.xcodeproj -scheme Macport \
   -configuration Debug -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
 xcodebuild -project Macport.xcodeproj -scheme MacportCtl \
   -configuration Debug -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
+xcodebuild -project Macport.xcodeproj -scheme MacportVMHost \
+  -configuration Debug -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
 
 # Unit tests (no guest boots, no runtime required).
 xcodebuild -project Macport.xcodeproj -scheme Macport \
@@ -41,11 +43,17 @@ Do **not** sign with `--deep`, and do not re-sign the embedded QEMU runtime: tho
 binaries already carry `com.apple.security.hypervisor`, and a blind deep sign strips
 it, which turns every QEMU boot into a hypervisor failure.
 
-The per-VM QEMU host (Workstream C) will carry the restricted
-`com.apple.vm.networking` / `com.apple.vm.device-access` grants once Apple issues
-them. Those keys live, commented out, in `Support/MacportVMHost.entitlements`; a
-signing failure after uncommenting them means the grant is missing, not that the
-file is malformed.
+The Macport target embeds `MacportVMHost` in `Macport.app/Contents/MacOS/` with
+`scripts/embed-vm-host.sh`. The host gets its own signature and the hypervisor
+entitlement; it is not a linked library. A signed build signs the host before the
+app seal is applied. `CODE_SIGNING_ALLOWED=NO` still copies it unsigned, which is
+enough for compile/test but not for booting a guest.
+
+The host carries `com.apple.security.hypervisor` and
+`com.apple.security.cs.allow-jit`. The restricted
+`com.apple.vm.networking` / `com.apple.vm.device-access` grants are not present:
+QEMU bridged networking is designed but unscheduled until Apple issues them or a
+privileged helper exists.
 
 ## The QEMU runtime
 
@@ -79,20 +87,11 @@ The refactor plan separates privilege the way shipping Parallels does; see
 | `Macport/Resources/Macport.entitlements` | GUI | `virtualization`, ordinary networking, audio input |
 | `Support/Macport-dev.entitlements` | GUI, local dev | same set, commented for reviewers |
 | `MacportCtl/MacportCtl.entitlements` | CLI | no VM grants; it is a control-plane client |
-| `Support/MacportVMHost.entitlements` | per-VM host (future) | `hypervisor`; restricted networking/device grants commented until granted |
+| `MacportVMHost/MacportVMHost.entitlements` | per-VM host | `hypervisor` + JIT; restricted networking/device grants intentionally absent |
 
-## Parallel worktrees (refactor workflow)
+## Branch and worktree state
 
-The Phase 2 refactor is executed in git worktrees so several workstreams can land
-without fighting over files:
-
-```sh
-git worktree add ../Macport-core-runtime -b core-runtime
-git worktree add ../Macport-qemu-control -b qemu-control
-git worktree add ../Macport-tools-media  -b tools-media
-```
-
-Each worktree needs its own `xcodegen generate` before building. Merge order is
-`core-runtime` → `qemu-control` → `tools-media`, with `main` owning `project.yml`
-and the entitlement files. After a merge, re-run `xcodegen generate` and the test
-command above.
+The Phase 2 workstreams (`core-runtime`, `qemu-control`, `tools-media`,
+`vm-host`, `ui-parity`) have been merged into `main`. Any remaining worktrees are
+historical; build from `main` after `xcodegen generate`. `project.yml` and the
+entitlement files are owned by `main`.

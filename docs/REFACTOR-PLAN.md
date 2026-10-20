@@ -1,8 +1,16 @@
 # Macport refactor plan — Parallels-class runtime boundaries
 
-**Status** Implementation plan for Phase 2 · October 2026
+**Status** Implemented — Phase 2 core · October 2026
 **Companions** `ARCHITECTURE.md` · `docs/FEATURE-PARITY.md` · `docs/UI-SPEC.md` ·
-`docs/evidence/parallels-refactor-2026-10-19.md`
+`docs/evidence/parallels-refactor-2026-10-19.md` · `docs/verification/2026-10-20-phase2.md`
+
+> **Implementation note (2026-10-20).** The workstreams in this plan are merged
+> into `main`. The live evidence, defects found and unverified paths are in
+> `docs/verification/2026-10-20-phase2.md`. Definition-of-done item 8 is met in
+> its fallback form: when the driver ISO is absent the UI names the exact paths
+> it searched; a live Windows install with Macport Tools is still unverified
+> because no `virtio-win.iso` was available. vTPM and bridged QEMU networking
+> remain non-goals for this phase, as stated below.
 **Goal** Move Macport from a single-VM, in-process demo to a multi-VM runtime with the
 same *boundaries* that make Parallels a product: an unprivileged UI, a control plane,
 per-VM execution, a self-contained bundle, and a managed guest-tools path.
@@ -32,9 +40,9 @@ Six decisions drive the refactor:
    and says so.
 5. **State is a registry, not a singleton.** `AppState.runningVMID` becomes
    `[UUID: VMInstance]`, with admission control before every start.
-6. **The bundle is the machine.** Config schema v2, qcow2 for QEMU, a `Snapshots/`
-   index, a lock file, and a runtime state file that lets a new process discover a VM
-   that is already up.
+6. **The bundle is the machine.** Config schema v2, qcow2 for QEMU with internal
+   snapshots, a lock file, and a runtime state file that lets a new process discover
+   a VM that is already up.
 
 This refactor does not add Coherence, DirectX, or a free Windows licence. Those remain
 non-goals in `FEATURE-PARITY.md` §5.
@@ -236,25 +244,27 @@ Bundle schema v2:
 <uuid>.macport/
   config.json              schemaVersion: 2, diskFormat: raw|qcow2
   disk.img | disk.qcow2
-  efi.variables | efi-vars.fd
+  efi-vars.qcow2 | efi-vars.fd
   machine-id.bin           VZ only
-  Snapshots/
-    index.json
   answer-media.img
-  tools.iso                generated on demand
+  tools-media.iso          generated on demand
+  tools-media-warning.txt  why generation was skipped
   runtime.json             present only while hosted
-  qemu.log / console.log
+  host.log / qemu.log / console.log
   .lock                    flock target
 ```
 
-- **QEMU snapshots** require qcow2. New QEMU VMs create `disk.qcow2`. Existing raw
-  disks stay usable; the first snapshot returns an actionable error and offers
-  `macportctl disk convert`, which runs `qemu-img convert -O qcow2` to a temp file,
-  fsyncs, then atomically renames. The old raw file is kept until the converted disk
-  boots.
-- **Snapshot semantics**: pause → `savevm <name>` (includes RAM) → resume. Restore:
-  stop → `loadvm <name>` → optionally start. Snapshot metadata lives in
-  `Snapshots/index.json`; engine tags are the source of truth for existence.
+- **QEMU snapshots** require qcow2. New QEMU VMs create `disk.qcow2` and convert
+  the writable EFI varstore to `efi-vars.qcow2` on start (legacy raw stores are
+  converted in place and kept bootable). Existing raw root disks stay usable; the
+  first snapshot returns an actionable error and offers `macportctl disk convert`,
+  which runs `qemu-img convert -O qcow2` to a temp file, fsyncs, then atomically
+  renames. The old raw file is kept until the converted disk boots.
+- **Snapshot semantics**: QMP `snapshot-save` writes VM state explicitly to the
+  root disk node and snapshots both writable qcow2 nodes (root disk and EFI vars);
+  `snapshot-load` restores them and `snapshot-delete` removes the tag from both.
+  Snapshot metadata lives inside the qcow2 images; engine tags are the source of
+  truth for existence. The human monitor's implicit `savevm` path is not used.
 - **Clone**: offline only; recursive APFS `clonefile(2)` into a new bundle, regenerate
   UUID/name and (for VZ) `machine-id.bin`. If the volume is not APFS or clone fails,
   report the reason; do not silently copy tens of gigabytes.
@@ -339,7 +349,7 @@ Capability truth:
 |---|---:|---:|
 | pause/resume | **true** | **true** (QMP) |
 | snapshots | false | **true** (qcow2) |
-| save-state (RAM) | false | **true** (via `savevm`) |
+| save-state (RAM) | false | **true** (via QMP `snapshot-save`) |
 | background hosting | false | **true** (`MacportVMHost`) |
 | disk import | false | **true** (`qemu-img`) |
 
@@ -366,9 +376,9 @@ build/release owner, not by feature workstreams.
 4. Unit tests with a mock engine: two VMs, admission denial, pause/resume flags.
 5. No UI redesign; existing detail pane must still build.
 
-**Acceptance** both schemes build; two mock VMs can be started/stopped; overcommit is
-refused with numbers; `VZEngine`/`QEMUEngine` compile unchanged except capability
-values.
+**Acceptance** all three schemes build; two mock VMs can be started/stopped;
+overcommit is refused with numbers; `VZEngine`/`QEMUEngine` compile unchanged except
+capability values.
 
 ### B — QEMU QMP, pause/resume, snapshots
 
@@ -449,13 +459,13 @@ binary is committed to the repo.
 
 ### F — Build, entitlements, runtime bundling
 
-**Owns** `project.yml`, `Support/*.entitlements`,
+**Owns** `project.yml`, `MacportVMHost/MacportVMHost.entitlements`,
 `Macport/Resources/Macport.entitlements`, new `scripts/*`.
 
 **Deliverables**
 
 1. Move `vm.networking`/`vm.device-access`/USB off the GUI entitlements; add
-   `Support/MacportVMHost.entitlements` for the future host.
+   `MacportVMHost/MacportVMHost.entitlements` for the host.
 2. `scripts/vendor-runtime.sh`: copy the managed QEMU runtime into
    `Macport.app/Contents/Resources/Runtime/QEMU`, re-sign ad-hoc, verify no
    `/opt/homebrew` references.
@@ -464,7 +474,7 @@ binary is committed to the repo.
 4. Test target addition after A lands; document `xcodegen generate` + both build
    commands.
 
-**Acceptance** both schemes build unsigned; built app contains the runtime when
+**Acceptance** all three schemes build unsigned; built app contains the runtime when
 present; `nm -m`/`otool -L` show no Homebrew paths; GUI entitlements contain no
 restricted VM networking/device keys.
 
@@ -515,7 +525,7 @@ Subagent rules:
 
 | Check | Method | Pass condition |
 |---|---|---|
-| Baseline build | `xcodegen` + both schemes | `BUILD SUCCEEDED` |
+| Baseline build | `xcodegen` + all three schemes | `BUILD SUCCEEDED` |
 | Multi-VM registry | Unit test with mock engine | Two instances, independent states |
 | Admission | Unit test with injected capacity | Overcommit refused with numbers |
 | QMP handshake | Fake socket test | Capabilities negotiated, commands parsed |

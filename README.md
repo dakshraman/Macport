@@ -42,26 +42,30 @@ the above.
 
 ## Status
 
-Early, and moving. Phase 1 — the engine layer and VM library — works; Phase 2 — the
-runtime boundaries that make it a product — is specified in
-`docs/REFACTOR-PLAN.md` and under implementation.
+Phase 2's runtime boundary is in place: QEMU guests run in a per-VM background
+host, the app and `macportctl` drive it through a control socket, and the core
+workflows below are live. Windows driver media and vTPM remain the honest gaps.
 
 | Area | State |
 | --- | --- |
 | `VMConfiguration` model, `.macport` bundle format | Done |
-| Engine protocol + capability model | Done; v2 (pause/resume/snapshots) in progress |
+| Engine protocol + capability model | Done; pause/resume/snapshot primitives |
 | Virtualization.framework engine (create/start/stop) | Working — Ubuntu 26.04 arm64 boots to desktop |
 | QEMU engine (Windows, optical media) | Working — Windows 11 Setup boots and installs |
 | Windows TPM bypass via generated answer media | Working — no manual registry edit |
-| Multi-VM runtime, control plane, per-VM QEMU host | Phase 2 — see `docs/REFACTOR-PLAN.md` |
-| Snapshots, clone, disk import | Phase 2 |
-| Macport Tools (guest drivers + agent) | Phase 2/3 |
-| SwiftUI interface | Library, creator, live display |
-| `macportctl` CLI | `list`, `capabilities`, `create`, `start`; parity in Phase 2 |
+| Per-VM QEMU host + control plane | Done — host survives app quit; NDJSON over a Unix socket |
+| Multi-VM runtime and admission control | Done |
+| Snapshots with RAM + disk rollback | Done for QEMU qcow2 machines |
+| Clone, disk import, machine settings | Done |
+| Macport Tools (Windows virtio drivers) | Built when a virtio-win ISO is supplied; not redistributed |
+| SwiftUI interface | Library, creator, live display, settings, snapshots, clone, import |
+| `macportctl` CLI | Lifecycle, pause/resume, snapshots, clone/import, status JSON |
 | Coherence-style app integration | Not started — see `ARCHITECTURE.md` and the non-goals |
 
-Both schemes build clean from `xcodegen generate`; the QEMU runtime is embedded into
-the app bundle at build time when one is present locally.
+All three schemes (`Macport`, `MacportCtl`, `MacportVMHost`) build clean from
+`xcodegen generate`; the QEMU runtime is embedded into the app bundle at build time
+when one is present locally, and the host executable is embedded next to the app
+binary.
 
 See `docs/competitive-analysis.md` and `docs/evidence/` for the reverse-engineering
 analysis of Parallels Desktop and UTM that informs these design decisions.
@@ -104,6 +108,12 @@ These are properties of the platform, not bugs waiting to be fixed:
   a path to it, and even then it is experimental.
 - **A Windows VM is not free.** Minimum realistic footprint is ~4 GB RAM and
   ~40 GB disk. No design removes that; a second OS costs what a second OS costs.
+- **Windows driver media is opt-in.** Macport builds its Tools disc from a
+  `virtio-win` ISO you supply; it does not redistribute Microsoft's signed
+  driver package. Without it, Setup may not see the virtio network device, and
+  the display stays at 800×600. The UI states the exact path it looked for.
+- **QEMU bridged networking is not available.** It needs a restricted Apple
+  entitlement or a privileged helper; QEMU machines use user-mode NAT.
 
 ## Licence
 

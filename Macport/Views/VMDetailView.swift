@@ -169,6 +169,19 @@ struct VMDetailView: View {
                             fix: "Open the machine's settings or log, correct the cause, then start it again."
                         )
                     }
+                    if config.guest == .windowsARM, MacportTools.resolve() == nil {
+                        ProblemCard(
+                            title: "Windows driver media is missing",
+                            message: "Windows Setup does not include the Arm64 virtio drivers "
+                                + "for Macport's network device and accelerated display. Macport "
+                                + "builds a Tools disc from a virtio-win ISO, and none is available yet.",
+                            detail: "Looked for \(MacportTools.cachedISOURL.path)\n"
+                                + "or \(MacportTools.environmentOverride) in the environment.",
+                            fix: "Place the virtio-win \(MacportTools.version) ISO at that path, "
+                                + "or point \(MacportTools.environmentOverride) at a copy, then "
+                                + "start the machine again. Macport does not redistribute it."
+                        )
+                    }
                     capacityCard
                     capabilityCard
                     storageCard
