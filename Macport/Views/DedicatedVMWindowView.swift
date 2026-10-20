@@ -4,8 +4,11 @@ import Virtualization
 import MacportKit
 
 /// Dedicated Standalone Virtual Machine Window: matches Parallels Desktop's
-/// signature single-VM window architecture. Each running machine opens in its
-/// own dedicated macOS window with an edge-to-edge console surface and unified toolbar.
+/// signature single-VM window architecture.
+///
+/// Pure edge-to-edge guest console display without any in-window toolbars or bars,
+/// allowing true distraction-free fullscreen and native window presentation.
+/// All controls are accessible via macOS Menu Bar commands and right-click context menu.
 @MainActor
 struct DedicatedVMWindowView: View {
     @EnvironmentObject private var store: VMStore
@@ -24,31 +27,33 @@ struct DedicatedVMWindowView: View {
     private var capabilities: EngineCapabilities { state.capabilities(for: config) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            windowToolbar
-            Divider()
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-            ZStack {
-                Color.black.ignoresSafeArea()
-
-                if vmState.isActive, let machine = state.liveMachine(for: config.id) {
-                    VMDisplayView(machine: machine)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
-                    EmbeddedVNCDisplayView(
-                        socketPath: vncPath,
-                        externalScalingMode: $scalingMode,
-                        showOverlayBar: false
-                    )
+            if vmState.isActive, let machine = state.liveMachine(for: config.id) {
+                VMDisplayView(machine: machine)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    stoppedStatePlaceholder
-                }
+            } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
+                EmbeddedVNCDisplayView(
+                    socketPath: vncPath,
+                    externalScalingMode: $scalingMode,
+                    showOverlayBar: false
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                stoppedStatePlaceholder
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 800, minHeight: 600)
-        .background(Color.macportWindow)
+        .frame(minWidth: 640, minHeight: 480)
+        .background(Color.black)
+        .contextMenu {
+            displayContextMenu
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MacportSetScalingMode"))) { notif in
+            if let mode = notif.object as? DisplayScalingMode {
+                scalingMode = mode
+            }
+        }
         .sheet(isPresented: $isPresentingSettings) {
             MachineSettingsSheet(config: config)
         }
@@ -57,248 +62,61 @@ struct DedicatedVMWindowView: View {
         }
     }
 
-    // MARK: - Toolbar & Subcomponents
-
-    private var windowToolbar: some View {
-        HStack(spacing: 10) {
-            controlCenterButton
-            Divider().frame(height: 18)
-            identityCluster
-            Spacer()
-            displayControls
-            Divider().frame(height: 18)
-            if vmState.isActive {
-                quickKeysCluster
-                Divider().frame(height: 18)
-            }
-            powerCluster
-            Divider().frame(height: 18)
-            toolsCluster
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.macportCard.opacity(0.95))
-    }
-
-    private var controlCenterButton: some View {
-        Button {
-            if let window = NSApp.windows.first(where: {
-                $0.identifier?.rawValue.contains("main") == true ||
-                $0.title.contains("Control Center") ||
-                $0.title == "Macport"
-            }) {
-                window.makeKeyAndOrderFront(nil)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Control Center")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.10)))
-        }
-        .buttonStyle(.plain)
-        .help("Bring Parallels Control Center to front (⌘0)")
-    }
-
-    private var identityCluster: some View {
-        HStack(spacing: 8) {
-            GuestAvatar(guest: config.guest, size: 28)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(config.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                HStack(spacing: 4) {
-                    Text(config.guest.displayName)
-                    Text("·")
-                    Text("Macport Hypervisor")
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-            }
-
-            if let startedAt = state.startedAt(for: config.id), vmState.isActive {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("Up \(MacportFormat.uptime(since: startedAt, now: context.date))")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
-                }
-            }
-
-            StatusPill(state: vmState)
-        }
-    }
-
-    private var displayControls: some View {
-        HStack(spacing: 6) {
-            Picker("Scaling", selection: $scalingMode) {
-                Text("Fit").tag(DisplayScalingMode.aspectFit)
-                Text("Stretch").tag(DisplayScalingMode.fill)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 116)
-            .help("Display Scaling: Fit aspect ratio or Stretch to eliminate borders")
-
-            Button {
-                snapWindowToGuestResolution()
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
-                        .font(.system(size: 10))
-                    Text("Snap")
-                        .font(.system(size: 11, weight: .medium))
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Snap window size directly to guest resolution (⌘1)")
-            .keyboardShortcut("1", modifiers: .command)
-        }
-    }
-
-    private var quickKeysCluster: some View {
-        HStack(spacing: 6) {
-            Button {
-                NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 10))
-                    Text("Ctrl+Alt+Del")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-            .help("Send Ctrl+Alt+Del (Unlock logon / Task Manager)")
-
-            Menu {
-                Button("Shift + F10 (Command Prompt)") {
-                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendShiftF10"), object: nil)
-                }
-                Button("Space") {
-                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0x0020))
-                }
-                Button("Tab") {
-                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0xFF09))
-                }
-                Button("Enter") {
-                    NotificationCenter.default.post(name: NSNotification.Name("MacportSendKey"), object: UInt32(0xFF0D))
-                }
-            } label: {
-                Image(systemName: "ellipsis.rectangle")
-                    .font(.system(size: 11))
-                    .padding(5)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-            }
-            .menuStyle(.borderlessButton)
-            .help("Send guest keys (Shift+F10, Tab, Enter, Space)")
-        }
-    }
+    // MARK: - Display Context Menu (Right-Click Parity)
 
     @ViewBuilder
-    private var powerCluster: some View {
+    private var displayContextMenu: some View {
+        Button(scalingMode == .fill ? "Aspect Ratio: Fit (⌘2)" : "Display: Stretch to Fill (⌘3)") {
+            scalingMode = (scalingMode == .fill) ? .aspectFit : .fill
+        }
+        Button("Snap Window to Guest (⌘1)") {
+            snapWindowToGuestResolution()
+        }
+        Button("Toggle Full Screen (⌃⌘F)") {
+            NSApp.keyWindow?.toggleFullScreen(nil)
+        }
+        Divider()
         if vmState.isActive {
-            if capabilities.pauseResume {
-                Button {
-                    if vmState == .paused {
-                        Task { await state.resume(id: config.id) }
-                    } else {
-                        Task { await state.pause(id: config.id) }
-                    }
-                } label: {
-                    Label(vmState == .paused ? "Resume" : "Pause",
-                          systemImage: vmState == .paused ? "play.fill" : "pause.fill")
-                }
-                .controlSize(.small)
-                .help(vmState == .paused ? "Resume VM" : "Pause VM in memory")
+            Button("Send Ctrl+Alt+Del") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportSendCtrlAltDel"), object: nil)
             }
-
-            Button(role: .destructive) {
+            Button("Send Shift+F10 (Command Prompt)") {
+                NotificationCenter.default.post(name: NSNotification.Name("MacportSendShiftF10"), object: nil)
+            }
+            Divider()
+            if vmState == .paused {
+                Button("Resume (⌘P)") {
+                    Task { await state.resume(id: config.id) }
+                }
+            } else {
+                Button("Pause (⌘P)") {
+                    Task { await state.pause(id: config.id) }
+                }
+            }
+            Button("Shut Down (⌘.)") {
                 Task { await state.stop(id: config.id, graceful: true) }
-            } label: {
-                Label("Shut Down", systemImage: "stop.fill")
             }
-            .controlSize(.small)
-            .help("Shut down guest OS cleanly")
+            Button("Force Off (⌥⌘.)") {
+                Task { await state.stop(id: config.id, graceful: false) }
+            }
         } else {
-            Button {
+            Button("Start (⌘R)") {
                 state.start(config, in: store)
-            } label: {
-                Label("Start", systemImage: "play.fill")
             }
-            .controlSize(.small)
-            .buttonStyle(.borderedProminent)
-            .tint(Color.macportRunning)
+        }
+        Divider()
+        Button("Control Center (⌘0)") {
+            bringControlCenterToFront()
+        }
+        Button("Settings… (⌘,)") {
+            isPresentingSettings = true
+        }
+        Button("Snapshots…") {
+            isPresentingSnapshots = true
         }
     }
 
-    private var toolsCluster: some View {
-        HStack(spacing: 6) {
-            Button {
-                isPresentingSnapshots = true
-            } label: {
-                Image(systemName: "camera")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .padding(5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-            .help("Snapshots")
-
-            Button {
-                isPresentingSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .padding(5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-            .help("Configuration")
-
-            if !config.sharedFolders.isEmpty {
-                sharedFoldersMenu
-            }
-
-            Button {
-                NSApp.keyWindow?.toggleFullScreen(nil)
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .padding(5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-            .help("Enter Full Screen")
-        }
-    }
-
-    private var sharedFoldersMenu: some View {
-        Menu {
-            ForEach(config.sharedFolders) { folder in
-                Button(URL(fileURLWithPath: folder.hostPath).lastPathComponent) {
-                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.hostPath)
-                }
-            }
-        } label: {
-            Image(systemName: "folder")
-                .font(.system(size: 12))
-        }
-        .menuStyle(.borderlessButton)
-        .padding(5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
-        .help("Open Mac Shared Folders in Finder")
-    }
+    // MARK: - Stopped State Placeholder
 
     private var stoppedStatePlaceholder: some View {
         VStack(spacing: 16) {
@@ -329,5 +147,15 @@ struct DedicatedVMWindowView: View {
 
     private func snapWindowToGuestResolution() {
         NotificationCenter.default.post(name: NSNotification.Name("MacportSnapWindow"), object: nil)
+    }
+
+    private func bringControlCenterToFront() {
+        if let window = NSApp.windows.first(where: {
+            $0.identifier?.rawValue.contains("main") == true ||
+            $0.title.contains("Control Center") ||
+            $0.title == "Macport"
+        }) {
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 }

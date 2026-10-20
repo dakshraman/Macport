@@ -68,6 +68,30 @@ struct MacportApp: App {
                 .keyboardShortcut("1", modifiers: .command)
             }
 
+            CommandMenu("View") {
+                Button("Toggle Full Screen") {
+                    NSApp.keyWindow?.toggleFullScreen(nil)
+                }
+                .keyboardShortcut("f", modifiers: [.control, .command])
+
+                Divider()
+
+                Button("Snap Window to Guest (1:1)") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSnapWindow"), object: nil)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("Fit Aspect Ratio") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSetScalingMode"), object: DisplayScalingMode.aspectFit)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button("Stretch to Fill") {
+                    NotificationCenter.default.post(name: NSNotification.Name("MacportSetScalingMode"), object: DisplayScalingMode.fill)
+                }
+                .keyboardShortcut("3", modifiers: .command)
+            }
+
             machineCommands
         }
 
@@ -82,7 +106,6 @@ struct MacportApp: App {
             }
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: true))
         .defaultSize(width: 800, height: 600)
 
         // MARK: - Menu Bar Extra

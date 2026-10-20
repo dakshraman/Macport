@@ -1453,7 +1453,7 @@ public final class QEMUEngine: NSObject, VMEngine {
         args += ["-device", "nvme,serial=macport,drive=rootdisk"]
         args += [
             "-drive",
-            "if=none,id=rootdisk,node-name=\(rootNodeName),format=\(diskFormat),file=\(diskPath)",
+            "if=none,id=rootdisk,node-name=\(rootNodeName),format=\(diskFormat),cache=writeback,discard=unmap,file=\(diskPath)",
         ]
 
         // Installer media as a **real SCSI CD-ROM carried over USB**.
@@ -1491,7 +1491,7 @@ public final class QEMUEngine: NSObject, VMEngine {
             // user did or how to fix it.
             args += [
                 "-drive",
-                "if=none,id=cd0,media=cdrom,readonly=on,file.locking=off,file=\(path)",
+                "if=none,id=cd0,media=cdrom,readonly=on,file.locking=off,cache=writeback,file=\(path)",
             ]
             args += ["-device", "scsi-cd,bus=usbcd.0,drive=cd0"]
         }
@@ -1510,7 +1510,7 @@ public final class QEMUEngine: NSObject, VMEngine {
             args += ["-device", "usb-bot,bus=usb-controller.0,id=usbtools"]
             args += [
                 "-drive",
-                "if=none,id=tools0,media=cdrom,readonly=on,file.locking=off,file=\(toolsMedia.path)",
+                "if=none,id=tools0,media=cdrom,readonly=on,file.locking=off,cache=writeback,file=\(toolsMedia.path)",
             ]
             args += ["-device", "scsi-cd,bus=usbtools.0,drive=tools0"]
         }
