@@ -1431,12 +1431,10 @@ public final class QEMUEngine: NSObject, VMEngine {
         // `-device ramfb,xres=...` is rejected, `bochs-display` has no resolution
         // either, and the firmware carries no Bochs driver for it to matter. A larger
         // guest resolution therefore needs firmware of Macport's own — which is the
-        // planned fix, and until then `zoom-to-fit` is what keeps the window usable.
-        if config.guest == .windowsARM {
-            args += ["-device", "ramfb"]
-        } else {
-            args += ["-device", "virtio-gpu-pci"]
-        }
+        // Windows and Linux both use `virtio-gpu-pci` with native widescreen resolution.
+        // With viogpudo installed in Windows, Windows unlocks full resolution
+        // selection in Windows Settings and runs natively at widescreen.
+        args += ["-device", "virtio-gpu-pci,xres=1440,yres=900"]
 
         args += ["-device", "virtio-rng-pci"]
 
