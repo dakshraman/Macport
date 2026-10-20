@@ -55,6 +55,26 @@ struct EmbeddedVNCDisplayView: View {
                     }
 
                     Button {
+                        client?.sendKeyEvent(key: 0x0020, isDown: true)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            client?.sendKeyEvent(key: 0x0020, isDown: false)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "space")
+                                .font(.system(size: 10))
+                            Text("Press Space")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send Space keypress to boot from CD/DVD")
+
+                    Button {
                         client?.sendCtrlAltDel()
                     } label: {
                         HStack(spacing: 4) {

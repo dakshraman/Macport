@@ -381,14 +381,14 @@ public final class QEMUEngine: NSObject, VMEngine {
             }
             guard reachedBootAttempt else { return }
 
-            // Exactly one press, and the count is the point. The firmware queues it, so
-            // it is waiting for the prompt to collect even if the prompt has not been
-            // drawn yet. But every press the prompt does *not* consume is delivered to
-            // the guest instead: QEMU holds keyboard reports until the guest collects
-            // them, and Windows collects them minutes later, inside Setup's own dialogs.
-            // Measured on this machine, a second press advanced the installer past a
-            // question before it had been answered.
-            Self.sendMonitorCommand("sendkey spc\n", at: monitorPath)
+            // Windows cdboot.efi takes ~1-2 seconds after BdsDxe starts to display
+            // "Press any key to boot from CD or DVD......", then counts down 5 seconds.
+            // Pulse the space key during that active window so the prompt is reliably caught.
+            for offsetMs in [1000, 2000, 3000] {
+                try? await Task.sleep(nanoseconds: UInt64(offsetMs) * 1_000_000)
+                guard let self, self.state == .running, self.process != nil else { return }
+                Self.sendMonitorCommand("sendkey spc\n", at: monitorPath)
+            }
         }
     }
 
