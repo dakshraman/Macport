@@ -461,19 +461,12 @@ private final class VNCView: NSView {
     private func aspectFitRect(for size: CGSize, in container: CGRect) -> CGRect {
         guard size.width > 0 && size.height > 0 else { return container }
         switch scalingMode {
-        case .fill:
+        case .fill, .aspectFit:
             return container
         case .center:
             let x = container.origin.x + (container.width - size.width) / 2
             let y = container.origin.y + (container.height - size.height) / 2
             return CGRect(x: x, y: y, width: size.width, height: size.height)
-        case .aspectFit:
-            let scale = min(container.width / size.width, container.height / size.height)
-            let scaledW = size.width * scale
-            let scaledH = size.height * scale
-            let x = container.origin.x + (container.width - scaledW) / 2
-            let y = container.origin.y + (container.height - scaledH) / 2
-            return CGRect(x: x, y: y, width: scaledW, height: scaledH)
         }
     }
 
