@@ -312,7 +312,6 @@ private final class VNCView: NSView {
     private var trackingAreaRef: NSTrackingArea?
     private var previousModifiers: NSEvent.ModifierFlags = []
 
-    override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
 
@@ -373,16 +372,18 @@ private final class VNCView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill()
-        bounds.fill()
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.fill(bounds)
 
         guard let image = currentImage else { return }
 
         let imageSize = CGSize(width: image.width, height: image.height)
         let rect = aspectFitRect(for: imageSize, in: bounds)
 
-        let nsImage = NSImage(cgImage: image, size: imageSize)
-        nsImage.draw(in: rect, from: .zero, operation: .copy, fraction: 1.0)
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: rect)
     }
 
     private func aspectFitRect(for size: CGSize, in container: CGRect) -> CGRect {
@@ -413,9 +414,8 @@ private final class VNCView: NSView {
 
         guard fitRect.width > 0, fitRect.height > 0 else { return nil }
 
-        // Since isFlipped is true, viewPoint.y = 0 is at the top, matching guest coordinates!
         let normalizedX = max(0.0, min(1.0, (viewPoint.x - fitRect.origin.x) / fitRect.width))
-        let normalizedY = max(0.0, min(1.0, (viewPoint.y - fitRect.origin.y) / fitRect.height))
+        let normalizedY = max(0.0, min(1.0, 1.0 - ((viewPoint.y - fitRect.origin.y) / fitRect.height)))
 
         let guestX = Int(normalizedX * CGFloat(image.width - 1))
         let guestY = Int(normalizedY * CGFloat(image.height - 1))
