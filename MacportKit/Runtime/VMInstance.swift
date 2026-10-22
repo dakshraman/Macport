@@ -58,8 +58,10 @@ public final class VMInstance: ObservableObject, Identifiable {
         self.lastError = engine.lastError
         self.startedAt = startedAt
         self.hostMetadata = hostMetadata
+        let routed = EngineRegistry.engineType(for: config)
         self.runsInExternalWindow =
-            ObjectIdentifier(EngineRegistry.engineType(for: config)) == ObjectIdentifier(QEMUEngine.self)
+            ObjectIdentifier(routed) == ObjectIdentifier(QEMUEngine.self)
+            || ObjectIdentifier(routed) == ObjectIdentifier(WineEngine.self)
     }
 
     /// Copy the engine's live state into this instance.

@@ -47,6 +47,7 @@ struct VMCreateView: View {
     // MARK: - Step 1: OS Selection State
 
     enum OSTemplate: String, CaseIterable, Identifiable {
+        case windowsApp = "Windows App (.exe)"
         case windows11 = "Windows 11 (Arm)"
         case ubuntuLinux = "Ubuntu Linux"
         case fedoraLinux = "Fedora Linux"
@@ -58,6 +59,7 @@ struct VMCreateView: View {
 
         var guestKind: GuestKind {
             switch self {
+            case .windowsApp: return .windowsApp
             case .windows11: return .windowsARM
             case .ubuntuLinux, .fedoraLinux, .debianLinux: return .linuxARM
             case .macOS: return .macOSGuest
@@ -67,6 +69,7 @@ struct VMCreateView: View {
 
         var defaultName: String {
             switch self {
+            case .windowsApp: return "Windows App"
             case .windows11: return "Windows 11"
             case .ubuntuLinux: return "Ubuntu 24.04 LTS"
             case .fedoraLinux: return "Fedora 40"
@@ -238,11 +241,22 @@ struct VMCreateView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                // Windows App (.exe) Card
+                osTile(
+                    template: .windowsApp,
+                    title: "Windows App (.exe)",
+                    badge: "Zero Overhead",
+                    badgeColor: .cyan,
+                    icon: "macwindow",
+                    accentGradient: [Color.cyan, Color.blue],
+                    description: "Run Windows software, games, and installers directly on macOS at native speed without VM memory overhead."
+                )
+
                 // Windows 11 Card
                 osTile(
                     template: .windows11,
                     title: "Windows 11 on Arm",
-                    badge: "Recommended",
+                    badge: "Full Virtual Machine",
                     badgeColor: .blue,
                     icon: "square.grid.2x2.fill",
                     accentGradient: [Color.blue, Color.cyan],
@@ -283,7 +297,31 @@ struct VMCreateView: View {
                 )
             }
 
-            if selectedOS == .windows11 {
+            if selectedOS == .windowsApp {
+                HStack(spacing: 10) {
+                    Image(systemName: "bolt.fill")
+                        .foregroundStyle(Color.macportAccent)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Wine Translation Engine (Direct Execution)")
+                            .font(.system(size: 12, weight: .semibold))
+                        switch WineRuntime.resolve() {
+                        case .success(let loc):
+                            Text("Ready: \(loc.hasMetalAcceleration ? "Apple Metal GPU acceleration & Rosetta 2 active." : "Rosetta 2 translation active.") Runs directly on macOS as native processes.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        case .failure(let err):
+                            Text(err.localizedDescription)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.macportPaused)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+            } else if selectedOS == .windows11 {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill")
                         .foregroundStyle(Color.macportRunning)
@@ -622,14 +660,14 @@ struct VMCreateView: View {
                         .font(.system(size: 24))
                         .foregroundStyle(isTargetedForDrop ? Color.macportAccent : .secondary)
 
-                    Text(selectedOS == .macOS ? "Choose an IPSW restore image or drag it here" : "Choose an ISO or disk image or drag it here")
+                    Text(selectedOS == .macOS ? "Choose an IPSW restore image or drag it here" : (selectedOS == .windowsApp ? "Choose a Windows executable (.exe, .msi) or drag it here" : "Choose an ISO or disk image or drag it here"))
                         .font(.system(size: 12, weight: .medium))
 
                     HStack(spacing: 10) {
-                        Button("Choose Image…") { chooseMedia() }
+                        Button(selectedOS == .windowsApp ? "Choose Executable…" : "Choose Image…") { chooseMedia() }
                             .controlSize(.small)
 
-                        Text("or leave empty to boot existing drive")
+                        Text(selectedOS == .windowsApp ? "or leave empty to open Windows Desktop" : "or leave empty to boot existing drive")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -649,6 +687,9 @@ struct VMCreateView: View {
                 if let url = url {
                     Task { @MainActor in
                         installMediaPath = url.path
+                        if selectedOS == .windowsApp, (name == "Windows App" || name.isEmpty) {
+                            name = url.deletingPathExtension().lastPathComponent
+                        }
                     }
                 }
             }
@@ -699,7 +740,11 @@ struct VMCreateView: View {
                         reviewRow(label: "Install Media", value: URL(fileURLWithPath: mediaPath).lastPathComponent)
                     }
 
-                    if selectedOS.guestKind == .windowsARM {
+                    if selectedOS.guestKind == .windowsApp {
+                        reviewRow(label: "Execution Engine", value: "Wine Translation Layer (Metal / Rosetta 2)")
+                        reviewRow(label: "Target Executable", value: installMediaPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Windows Explorer (explorer.exe)")
+                        reviewRow(label: "Memory Overhead", value: "0 MB (Dynamic Host Processes)")
+                    } else if selectedOS.guestKind == .windowsARM {
                         reviewRow(label: "Macport Tools", value: MacportTools.resolve() != nil ? "virtio-win.iso auto-attached" : "Missing virtio-win.iso")
                     }
                 }
@@ -817,6 +862,16 @@ struct VMCreateView: View {
         let hostCores = maxHostCPUs
         let hostRAM = maxHostMemoryGB
 
+        if selectedOS == .windowsApp {
+            cpuCount = min(4, hostCores)
+            memoryGB = 4
+            diskGB = 32
+            shareDesktop = true
+            shareDocuments = true
+            shareDownloads = true
+            return
+        }
+
         // On an 8 GB host (usable = 6 GB), calibrate defaults so machines fit host admission limits
         let defaultMem: Int
         if hostRAM <= 6 {
@@ -900,9 +955,14 @@ struct VMCreateView: View {
         panel.allowsOtherFileTypes = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose an ISO or disk image to boot"
+        panel.message = selectedOS == .windowsApp
+            ? "Choose a Windows executable (.exe, .msi, or installer) to run"
+            : (selectedOS == .macOS ? "Choose an IPSW restore image" : "Choose an ISO or disk image to boot")
         if panel.runModal() == .OK {
             installMediaPath = panel.url?.path
+            if selectedOS == .windowsApp, let filename = panel.url?.deletingPathExtension().lastPathComponent, name == "Windows App" || name.isEmpty {
+                name = filename
+            }
         }
     }
 

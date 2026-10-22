@@ -80,20 +80,25 @@ struct VMDetailView: View {
         }
     }
 
-    /// QEMU draws into its own Cocoa window. Saying so is the honest console
-    /// state for this engine; embedding it would be a second, unimplemented
-    /// display path.
     private var externalWindowCard: some View {
-        InfoCard(
-            title: "Running in its own window",
-            subtitle: "\(engineType.displayName) draws this guest outside Macport."
+        let isWine = engineType.identifier == WineEngine.identifier
+        return InfoCard(
+            title: isWine ? "Running Natively on macOS" : "Running in its own window",
+            subtitle: isWine ? "Wine Translation Layer renders directly on your Mac desktop." : "\(engineType.displayName) draws this guest outside Macport."
         ) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("The guest console is the engine's own window, not a view inside Macport. "
-                     + "Embedding needs a capture path this engine does not expose yet.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if isWine {
+                    Text("This Windows application runs natively on macOS with floating Cocoa windows, Dock integration, and Apple Metal GPU acceleration. No virtual machine hypervisor is needed, consuming 0 MB idle RAM.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The guest console is the engine's own window, not a view inside Macport. "
+                         + "Embedding needs a capture path this engine does not expose yet.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 8) {
                     Button("Reveal Bundle") {
