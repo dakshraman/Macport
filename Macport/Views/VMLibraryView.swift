@@ -18,6 +18,8 @@ struct VMLibraryView: View {
 
     @Binding var selection: VMConfiguration.ID?
 
+    @State private var hoveredBottleId: UUID?
+
     private var bottleConfigs: [VMConfiguration] {
         store.machines.filter { $0.guest == .windowsApp }
     }
@@ -155,6 +157,7 @@ struct VMLibraryView: View {
 
     private func bottleRow(_ config: VMConfiguration) -> some View {
         let isSelected = (selection == config.id)
+        let isHovered = (hoveredBottleId == config.id)
         let vmState = state.state(for: config.id)
 
         return Button {
@@ -164,7 +167,7 @@ struct VMLibraryView: View {
                 // Active state dot
                 Circle()
                     .fill(vmState.isActive ? Color.macportRunning : Color.clear)
-                    .frame(width: 5, height: 5)
+                    .frame(width: 6, height: 6)
 
                 Text(config.name)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
@@ -181,17 +184,40 @@ struct VMLibraryView: View {
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.macportRunning.opacity(0.15)))
+                } else if isHovered {
+                    Menu {
+                        Button("Run Application") {
+                            state.start(config, in: store)
+                        }
+                        Button("Open C: Drive") {
+                            let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
+                            NSWorkspace.shared.open(driveC)
+                        }
+                        Divider()
+                        Button("Delete Bottle…", role: .destructive) {
+                            ui.deleteTarget = config
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color(white: 0.6))
+                            .frame(width: 16, height: 16)
+                    }
+                    .menuStyle(.borderlessButton)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.crossoverCard : Color.clear)
+                    .fill(isSelected ? Color.crossoverCard : (isHovered ? Color(white: 0.16) : Color.clear))
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            hoveredBottleId = hovering ? config.id : nil
+        }
         .contextMenu {
             if vmState.isActive {
                 Button("Quit All Applications in Bottle", role: .destructive) {
@@ -253,17 +279,26 @@ struct VMLibraryView: View {
             state.isPresentingCreateSheet = true
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "plus.square.fill")
-                    .font(.system(size: 16))
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Color.crossoverBlue)
 
-                Text("Install")
-                    .font(.system(size: 13, weight: .semibold))
+                Text("Install Application…")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
 
                 Spacer()
             }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(white: 0.18))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }

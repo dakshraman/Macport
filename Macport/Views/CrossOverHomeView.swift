@@ -13,6 +13,8 @@ struct CrossOverHomeView: View {
     @State private var appItems: [HomeAppItem] = []
     @State private var hoveredItemId: String?
     @State private var statusMessage: String?
+    @State private var searchText = ""
+    @State private var selectedBottleFilter: String? = nil
 
     struct HomeAppItem: Identifiable, Hashable {
         let id: String
@@ -24,20 +26,32 @@ struct CrossOverHomeView: View {
         let iconSystemName: String
     }
 
+    private var bottleNames: [String] {
+        Array(Set(appItems.map { $0.bottleName })).sorted()
+    }
+
+    private var filteredApps: [HomeAppItem] {
+        var list = appItems
+        if let filter = selectedBottleFilter, !filter.isEmpty {
+            list = list.filter { $0.bottleName == filter }
+        }
+        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        if !query.isEmpty {
+            list = list.filter {
+                $0.name.lowercased().contains(query) ||
+                $0.bottleName.lowercased().contains(query)
+            }
+        }
+        return list
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header: "Home"
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Home")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
-
-                Divider()
-                    .background(Color.white.opacity(0.08))
-            }
-            .padding(.horizontal, 32)
-            .padding(.top, 28)
-            .padding(.bottom, 20)
+            // Header: "Home" + Search & Filter
+            headerSection
+                .padding(.horizontal, 32)
+                .padding(.top, 28)
+                .padding(.bottom, 16)
 
             // Content
             ScrollView {
@@ -48,6 +62,7 @@ struct CrossOverHomeView: View {
                                 .foregroundStyle(Color.crossoverBlue)
                             Text(msg)
                                 .font(.system(size: 12))
+                                .foregroundStyle(.white)
                             Spacer()
                             Button(action: { statusMessage = nil }) {
                                 Image(systemName: "xmark")
@@ -62,13 +77,15 @@ struct CrossOverHomeView: View {
 
                     if appItems.isEmpty {
                         emptyHomeView
+                    } else if filteredApps.isEmpty {
+                        noMatchingResultsView
                     } else {
                         LazyVGrid(
                             columns: [GridItem(.adaptive(minimum: 110, maximum: 130), spacing: 28)],
                             alignment: .leading,
                             spacing: 28
                         ) {
-                            ForEach(appItems) { item in
+                            ForEach(filteredApps) { item in
                                 homeAppTile(item)
                             }
                         }
@@ -85,6 +102,88 @@ struct CrossOverHomeView: View {
         }
     }
 
+    // MARK: - Header Section
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Text("Home")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                // Live Search Field
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color(white: 0.5))
+
+                    TextField("Search apps & games…", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color(white: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(white: 0.2))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+                .frame(width: 220)
+            }
+
+            // Bottle Filter Chips (when multiple bottles exist)
+            if bottleNames.count > 1 {
+                HStack(spacing: 8) {
+                    filterChip(title: "All (\(appItems.count))", isSelected: selectedBottleFilter == nil) {
+                        selectedBottleFilter = nil
+                    }
+
+                    ForEach(bottleNames, id: \.self) { bName in
+                        let count = appItems.filter { $0.bottleName == bName }.count
+                        filterChip(title: "\(bName) (\(count))", isSelected: selectedBottleFilter == bName) {
+                            selectedBottleFilter = bName
+                        }
+                    }
+                }
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+        }
+    }
+
+    private func filterChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? .white : Color(white: 0.65))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(isSelected ? Color.crossoverBlue : Color(white: 0.22))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - App Tile
 
     private func homeAppTile(_ item: HomeAppItem) -> some View {
@@ -99,10 +198,10 @@ struct CrossOverHomeView: View {
                         .scaledToFit()
                         .frame(width: 72, height: 72)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .shadow(color: .black.opacity(isHovered ? 0.45 : 0.25), radius: isHovered ? 8 : 4, y: isHovered ? 4 : 2)
+                        .shadow(color: .black.opacity(isHovered ? 0.5 : 0.25), radius: isHovered ? 10 : 4, y: isHovered ? 5 : 2)
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.white.opacity(isHovered ? 0.35 : 0.12), lineWidth: 1)
+                                .stroke(isHovered ? Color.crossoverBlue.opacity(0.6) : Color.white.opacity(0.12), lineWidth: isHovered ? 1.5 : 1)
                         )
                 } else {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -116,9 +215,9 @@ struct CrossOverHomeView: View {
                         .frame(width: 72, height: 72)
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.white.opacity(isHovered ? 0.3 : 0.1), lineWidth: 1)
+                                .stroke(isHovered ? Color.crossoverBlue.opacity(0.6) : Color.white.opacity(0.1), lineWidth: 1)
                         )
-                        .shadow(color: .black.opacity(isHovered ? 0.35 : 0.2), radius: isHovered ? 8 : 4, y: 3)
+                        .shadow(color: .black.opacity(isHovered ? 0.4 : 0.2), radius: isHovered ? 8 : 4, y: 3)
                         .overlay(
                             Image(systemName: item.iconSystemName)
                                 .font(.system(size: 30))
@@ -142,6 +241,8 @@ struct CrossOverHomeView: View {
                 }
             }
             .frame(width: 76, height: 76)
+            .scaleEffect(isHovered ? 1.04 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
 
             // Titles
             VStack(spacing: 2) {
@@ -153,7 +254,7 @@ struct CrossOverHomeView: View {
 
                 Text(item.bottleName)
                     .font(.system(size: 10))
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(Color(white: 0.55))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -162,7 +263,7 @@ struct CrossOverHomeView: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isHovered ? Color.crossoverCard.opacity(0.6) : Color.clear)
+                .fill(isHovered ? Color(white: 0.22) : Color.clear)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -183,7 +284,7 @@ struct CrossOverHomeView: View {
             Button {
                 ui.selection = item.bottleId
             } label: {
-                Label("Go to Bottle", systemImage: "shippingbox")
+                Label("Go to Bottle", systemImage: "shippingbox.fill")
             }
 
             Divider()
@@ -193,38 +294,80 @@ struct CrossOverHomeView: View {
             } label: {
                 Label("Show in Finder", systemImage: "folder")
             }
+
+            Button {
+                if let config = store.machines.first(where: { $0.id == item.bottleId }) {
+                    let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
+                    NSWorkspace.shared.open(driveC)
+                }
+            } label: {
+                Label("Open Bottle C: Drive", systemImage: "internaldrive")
+            }
         }
     }
 
     // MARK: - Empty State
 
     private var emptyHomeView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "shippingbox.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.crossoverBlue.opacity(0.6))
+        VStack(spacing: 20) {
+            MacportAppLogoView(size: 72)
 
             VStack(spacing: 6) {
-                Text("No Installed Applications")
-                    .font(.system(size: 16, weight: .semibold))
+                Text("Welcome to Macport Pro")
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(.white)
-                Text("Install a Windows application, game, or launcher to see it here.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                Text("Run your favorite Windows applications and games with native Apple Metal performance.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color(white: 0.6))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
             }
 
-            Button {
-                state.isPresentingCreateSheet = true
-            } label: {
-                Label("Install a Windows Application", systemImage: "plus")
-                    .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 12) {
+                Button {
+                    state.isPresentingCreateSheet = true
+                } label: {
+                    Label("Install a Windows Application", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.crossoverBlue))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    ui.isPresentingImport = true
+                } label: {
+                    Label("Import CrossOver Bottle", systemImage: "square.and.arrow.down")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.22)))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.crossoverBlue)
-            .controlSize(.regular)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 80)
+    }
+
+    private var noMatchingResultsView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundStyle(Color(white: 0.4))
+            Text("No applications found matching '\(searchText)'")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+            Button("Clear Search") {
+                searchText = ""
+            }
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
     }
 
     // MARK: - Operations

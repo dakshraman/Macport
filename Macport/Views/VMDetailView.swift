@@ -465,6 +465,8 @@ struct WineBottleDetailView: View {
     @State private var customArguments = ""
     @State private var statusMessage: String?
     @State private var hoveredShortcutId: String?
+    @State private var appSearchQuery = ""
+    @State private var hoveredPanelId: String?
 
     private var vmState: VMState { state.state(for: config.id) }
     private var bundleURL: URL { store.bundleURL(for: config) }
@@ -481,6 +483,12 @@ struct WineBottleDetailView: View {
         default:
             return wineSettings.bottleTemplate
         }
+    }
+
+    private var displayedShortcuts: [WineProgramShortcut] {
+        let q = appSearchQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return installedShortcuts }
+        return installedShortcuts.filter { $0.name.lowercased().contains(q) }
     }
 
     var body: some View {

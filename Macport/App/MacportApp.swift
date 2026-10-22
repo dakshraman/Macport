@@ -20,19 +20,19 @@ struct MacportApp: App {
     }
 
     var body: some Scene {
-        // MARK: - Scene 1: Parallels Control Center Window (⌘0)
-        WindowGroup("Control Center", id: "main") {
+        // MARK: - Main Application Window
+        WindowGroup("Macport", id: "main") {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(state)
                 .environmentObject(ui)
-                .frame(minWidth: 880, minHeight: 560)
+                .frame(minWidth: 920, minHeight: 600)
                 .task {
                     store.load()
                 }
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: true))
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Virtual Machine…") {
