@@ -257,12 +257,14 @@ struct MacportApp: App {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
 
         let bottleParam = components.queryItems?.first(where: { $0.name == "bottle" })?.value
+        let vmParam = components.queryItems?.first(where: { $0.name == "vm" })?.value
         let execParam = components.queryItems?.first(where: { $0.name == "exec" })?.value
 
-        guard let bottleString = bottleParam, let bottleUUID = UUID(uuidString: bottleString) else { return }
-        guard let config = store.machines.first(where: { $0.id == bottleUUID }) else { return }
+        guard let targetIdString = bottleParam ?? vmParam, let targetUUID = UUID(uuidString: targetIdString) else { return }
+        guard let config = store.machines.first(where: { $0.id == targetUUID }) else { return }
 
         ui.selection = config.id
+        ui.viewMode = .detail
         NSApp.activate(ignoringOtherApps: true)
 
         let bundleURL = store.bundleURL(for: config)
