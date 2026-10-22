@@ -270,6 +270,16 @@ struct VMLibraryView: View {
 
             Divider()
 
+            Button("Add to Applications…") {
+                exportBottle(config, to: .applications)
+            }
+
+            Button("Add to Desktop…") {
+                exportBottle(config, to: .desktop)
+            }
+
+            Divider()
+
             Button("Duplicate Bottle…") {
                 ui.cloneTarget = config
             }
@@ -285,6 +295,30 @@ struct VMLibraryView: View {
         Task {
             let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
             try? await engine.launchExecutable("winecfg", in: bundleURL, metal: true)
+        }
+    }
+
+    private func exportBottle(_ config: VMConfiguration, to destination: MacportAppPublisher.Destination) {
+        let bundleURL = store.bundleURL(for: config)
+        let shortcuts = WineBottleManager.scanInstalledShortcuts(in: bundleURL)
+        let primary = config.wineSettings?.primaryExecutable
+        let match = shortcuts.first(where: { $0.executable == primary })
+        let targetName = match?.name ?? config.name
+        let exec = primary ?? shortcuts.first?.executable ?? "explorer.exe"
+        let icon = match?.iconURL ?? shortcuts.first?.iconURL
+
+        do {
+            let appURL = try MacportAppPublisher.exportLauncherApp(
+                bottleId: config.id,
+                bottleName: config.name,
+                appName: targetName,
+                executable: exec,
+                iconURL: icon,
+                to: destination
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            print("Failed to export bottle: \(error.localizedDescription)")
         }
     }
 

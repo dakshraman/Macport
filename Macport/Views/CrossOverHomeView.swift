@@ -295,6 +295,20 @@ struct CrossOverHomeView: View {
                 Label("Show in Finder", systemImage: "folder")
             }
 
+            Divider()
+
+            Button {
+                exportHomeApp(item, to: .applications)
+            } label: {
+                Label("Add to Applications", systemImage: "app.badge.checkmark")
+            }
+
+            Button {
+                exportHomeApp(item, to: .desktop)
+            } label: {
+                Label("Add to Desktop", systemImage: "desktopcomputer")
+            }
+
             Button {
                 if let config = store.machines.first(where: { $0.id == item.bottleId }) {
                     let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
@@ -419,6 +433,23 @@ struct CrossOverHomeView: View {
             } catch {
                 statusMessage = "Failed to launch: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func exportHomeApp(_ item: HomeAppItem, to destination: MacportAppPublisher.Destination) {
+        do {
+            let appURL = try MacportAppPublisher.exportLauncherApp(
+                bottleId: item.bottleId,
+                bottleName: item.bottleName,
+                appName: item.name,
+                executable: item.executable,
+                iconURL: item.iconURL,
+                to: destination
+            )
+            statusMessage = "Added '\(item.name)' to \(destination.displayName). Launch directly from Spotlight or Launchpad!"
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            statusMessage = "Failed to export application: \(error.localizedDescription)"
         }
     }
 }
