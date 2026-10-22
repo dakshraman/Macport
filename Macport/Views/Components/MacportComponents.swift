@@ -418,3 +418,67 @@ struct KeyValueRow: View {
         .accessibilityLabel("\(label): \(value)")
     }
 }
+
+// MARK: - Macport App Logo
+
+/// The signature Macport Pro emblem: Apple Pro titanium squircle with
+/// metallic chamfer, rotating gateway diamond, and electric cyan/blue bolt.
+@MainActor
+public struct MacportAppLogoView: View {
+    public let size: CGFloat
+    public var hasShadow: Bool
+
+    public init(size: CGFloat = 38, hasShadow: Bool = true) {
+        self.size = size
+        self.hasShadow = hasShadow
+    }
+
+    public var body: some View {
+        let cornerRadius = size * (10.0 / 38.0)
+        let strokeWidth = max(1.0, size * (1.0 / 38.0))
+        let diamondSize = size * (20.0 / 38.0)
+        let diamondCorner = diamondSize * (6.0 / 20.0)
+        let diamondStroke = max(1.5, size * (1.8 / 38.0))
+        let boltFontSize = size * (13.0 / 38.0)
+
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(white: 0.25), Color(white: 0.12)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: size, height: size)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: strokeWidth
+                        )
+                )
+                .shadow(
+                    color: hasShadow ? .black.opacity(0.4) : .clear,
+                    radius: hasShadow ? max(2, size * 0.1) : 0,
+                    y: hasShadow ? max(1, size * 0.05) : 0
+                )
+
+            ZStack {
+                RoundedRectangle(cornerRadius: diamondCorner, style: .continuous)
+                    .stroke(Color.crossoverBlue, lineWidth: diamondStroke)
+                    .frame(width: diamondSize, height: diamondSize)
+                    .rotationEffect(.degrees(45))
+
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: boltFontSize, weight: .bold))
+                    .foregroundStyle(Color.crossoverBlue)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}

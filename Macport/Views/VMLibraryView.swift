@@ -101,42 +101,7 @@ struct VMLibraryView: View {
 
     private var brandHeader: some View {
         HStack(spacing: 12) {
-            // Apple Pro Titanium Squircle Icon with glow
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(white: 0.25), Color(white: 0.12)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 38, height: 38)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
-
-                // Hypervisor gateway emblem with cyan accent
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.crossoverBlue, lineWidth: 1.5)
-                        .frame(width: 20, height: 20)
-                        .rotationEffect(.degrees(45))
-
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.crossoverBlue)
-                }
-            }
+            MacportAppLogoView(size: 38)
 
             // Stylized Title
             VStack(alignment: .leading, spacing: 1) {
