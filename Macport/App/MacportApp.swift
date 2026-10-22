@@ -30,6 +30,9 @@ struct MacportApp: App {
                 .task {
                     store.load()
                 }
+                .onOpenURL { url in
+                    handleIncomingURL(url)
+                }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -244,6 +247,32 @@ struct MacportApp: App {
             }
             .disabled(selectedConfiguration == nil || selectedDeleteRefusal != nil)
             .help(selectedDeleteRefusal ?? "Move this machine’s bundle to the Trash.")
+        }
+    }
+
+    // MARK: - External URL Scheme Handler (macport://launch?bottle=...&exec=...)
+
+    private func handleIncomingURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "macport" else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+
+        let bottleParam = components.queryItems?.first(where: { $0.name == "bottle" })?.value
+        let execParam = components.queryItems?.first(where: { $0.name == "exec" })?.value
+
+        guard let bottleString = bottleParam, let bottleUUID = UUID(uuidString: bottleString) else { return }
+        guard let config = store.machines.first(where: { $0.id == bottleUUID }) else { return }
+
+        ui.selection = config.id
+        NSApp.activate(ignoringOtherApps: true)
+
+        let bundleURL = store.bundleURL(for: config)
+        if let exec = execParam, !exec.isEmpty {
+            Task {
+                let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
+                try? await engine.launchExecutable(exec, in: bundleURL, metal: true)
+            }
+        } else {
+            state.start(config, in: store)
         }
     }
 }

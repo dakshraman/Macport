@@ -817,3 +817,169 @@ public enum WineBottleManager: Sendable {
     }
 }
 
+// MARK: - Native Mac App Publishing (.app in ~/Applications & ~/Desktop)
+
+/// Generates and installs native macOS .app launcher bundles for bottle applications into
+/// ~/Applications (for Launchpad, Spotlight, and Finder integration) and ~/Desktop.
+public enum MacportAppPublisher: Sendable {
+
+    public enum Destination: Sendable {
+        case applications
+        case desktop
+        case custom(URL)
+
+        public var directoryURL: URL {
+            switch self {
+            case .applications:
+                let homeApps = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true)
+                let macportApps = homeApps.appendingPathComponent("Macport", isDirectory: true)
+                return macportApps
+            case .desktop:
+                return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Desktop", isDirectory: true)
+            case .custom(let url):
+                return url
+            }
+        }
+
+        public var displayName: String {
+            switch self {
+            case .applications: return "Applications"
+            case .desktop: return "Desktop"
+            case .custom(let url): return url.lastPathComponent
+            }
+        }
+    }
+
+    /// Exports a native macOS `.app` bundle.
+    @discardableResult
+    public static func exportLauncherApp(
+        bottleId: UUID,
+        bottleName: String,
+        appName: String,
+        executable: String,
+        iconURL: URL? = nil,
+        to destination: Destination = .applications
+    ) throws -> URL {
+        let fm = FileManager.default
+        let destDir = destination.directoryURL
+        try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        let safeName = appName.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let appBundleURL = destDir.appendingPathComponent("\(safeName).app", isDirectory: true)
+
+        if fm.fileExists(atPath: appBundleURL.path) {
+            try? fm.removeItem(at: appBundleURL)
+        }
+
+        let contentsURL = appBundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let macosURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+        let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+
+        try fm.createDirectory(at: macosURL, withIntermediateDirectories: true)
+        try fm.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+
+        // 1. Info.plist
+        let alphanumericId = safeName.filter { $0.isLetter || $0.isNumber }
+        let bundleID = "com.dakshraman.macport.launcher.\(bottleId.uuidString.lowercased()).\(alphanumericId.isEmpty ? "app" : alphanumericId)"
+        let plistDict: [String: Any] = [
+            "CFBundleDevelopmentRegion": "en",
+            "CFBundleExecutable": "launch",
+            "CFBundleIconFile": "AppIcon",
+            "CFBundleIdentifier": bundleID,
+            "CFBundleInfoDictionaryVersion": "6.0",
+            "CFBundleName": safeName,
+            "CFBundleDisplayName": safeName,
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+            "LSMinimumSystemVersion": "14.0",
+            "NSHighResolutionCapable": true,
+            "MacportBottleID": bottleId.uuidString,
+            "MacportBottleName": bottleName,
+            "MacportExecutable": executable
+        ]
+
+        let plistData = try PropertyListSerialization.data(fromPropertyList: plistDict, format: .xml, options: 0)
+        try plistData.write(to: contentsURL.appendingPathComponent("Info.plist"))
+
+        // 2. PkgInfo
+        try "APPL????".write(to: contentsURL.appendingPathComponent("PkgInfo"), atomically: true, encoding: .ascii)
+
+        // 3. MacOS/launch executable script
+        let encodedExec = executable.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? executable
+        let script = """
+        #!/bin/bash
+        # Macport Launcher for \(safeName) in bottle \(bottleName)
+        open "macport://launch?bottle=\(bottleId.uuidString)&exec=\(encodedExec)" 2>/dev/null || open -b com.dakshraman.macport "macport://launch?bottle=\(bottleId.uuidString)&exec=\(encodedExec)"
+        """
+        let launchURL = macosURL.appendingPathComponent("launch")
+        try script.write(to: launchURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launchURL.path)
+
+        // 4. Resources/AppIcon.icns
+        let targetIcon = resourcesURL.appendingPathComponent("AppIcon.icns")
+        if let icon = iconURL, fm.fileExists(atPath: icon.path) {
+            if icon.pathExtension.lowercased() == "icns" {
+                try? fm.copyItem(at: icon, to: targetIcon)
+            } else if icon.pathExtension.lowercased() == "png" {
+                convertPNGToICNS(source: icon, destination: targetIcon)
+            }
+        }
+        if !fm.fileExists(atPath: targetIcon.path) {
+            copyDefaultMacportIcon(to: targetIcon)
+        }
+
+        // 5. Register with macOS LaunchServices
+        registerWithLaunchServices(at: appBundleURL)
+
+        return appBundleURL
+    }
+
+    private static func copyDefaultMacportIcon(to target: URL) {
+        let fm = FileManager.default
+        if let defaultICNS = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           fm.fileExists(atPath: defaultICNS.path) {
+            try? fm.copyItem(at: defaultICNS, to: target)
+        } else {
+            let candidates = [
+                URL(fileURLWithPath: "/Applications/Macport.app/Contents/Resources/AppIcon.icns"),
+                Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/AppIcon.icns")
+            ]
+            for cand in candidates where fm.fileExists(atPath: cand.path) {
+                try? fm.copyItem(at: cand, to: target)
+                return
+            }
+        }
+    }
+
+    private static func convertPNGToICNS(source: URL, destination: URL) {
+        let fm = FileManager.default
+        let tempIconset = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".iconset")
+        try? fm.createDirectory(at: tempIconset, withIntermediateDirectories: true)
+        let s512 = tempIconset.appendingPathComponent("icon_512x512.png")
+        let s1024 = tempIconset.appendingPathComponent("icon_512x512@2x.png")
+        try? fm.copyItem(at: source, to: s512)
+        try? fm.copyItem(at: source, to: s1024)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+        proc.arguments = ["-c", "icns", tempIconset.path, "-o", destination.path]
+        try? proc.run()
+        proc.waitUntilExit()
+        try? fm.removeItem(at: tempIconset)
+    }
+
+    private static func registerWithLaunchServices(at url: URL) {
+        let lsregister = "/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+        if FileManager.default.fileExists(atPath: lsregister) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: lsregister)
+            proc.arguments = ["-f", url.path]
+            try? proc.run()
+            proc.waitUntilExit()
+        }
+    }
+}
+
