@@ -129,14 +129,17 @@ public final class WineEngine: VMEngine {
             env["WINEDEBUG"] = "-all"
             env["DISPLAY"] = ":0"
             env["WINEDLLPATH"] = runtime.libDirectory.appendingPathComponent("wine").path
+            env["ROSETTA_ADVERTISE_AVX"] = "1"
 
+            var fallbackLibs = runtime.libDirectory.path
             if runtime.hasMetalAcceleration {
                 // Direct DXMT / winemetal.so acceleration
                 env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core=n,b"
                 let dxmtDir = runtime.root.appendingPathComponent("lib/dxmt/x86_64-unix").path
-                let currentDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
-                env["DYLD_FALLBACK_LIBRARY_PATH"] = dxmtDir + (currentDyld.isEmpty ? "" : ":" + currentDyld)
+                fallbackLibs = dxmtDir + ":" + fallbackLibs
             }
+            let currentDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
+            env["DYLD_FALLBACK_LIBRARY_PATH"] = currentDyld.isEmpty ? fallbackLibs : fallbackLibs + ":" + currentDyld
 
             // Determine target executable to run
             let targetArgs: [String]
@@ -209,6 +212,50 @@ public final class WineEngine: VMEngine {
 
     public func forceStop() async throws {
         try await stop()
+    }
+
+    /// Launches a specific Windows executable or built-in tool within the bottle prefix.
+    public func launchExecutable(
+        _ executable: String,
+        arguments: [String] = [],
+        in bundle: URL,
+        metal: Bool = true
+    ) async throws {
+        let runtime = try resolveRuntime()
+        self.runtimeLocations = runtime
+
+        let bottleURL = bundle.appendingPathComponent("bottle", isDirectory: true)
+        self.activeBottleURL = bottleURL
+
+        let process = Process()
+        process.executableURL = runtime.wineloader
+
+        var env = ProcessInfo.processInfo.environment
+        env["WINEPREFIX"] = bottleURL.path
+        env["WINEDEBUG"] = "-all"
+        env["DISPLAY"] = ":0"
+        env["WINEDLLPATH"] = runtime.libDirectory.appendingPathComponent("wine").path
+        env["ROSETTA_ADVERTISE_AVX"] = "1"
+
+        var fallbackLibs = runtime.libDirectory.path
+        if runtime.hasMetalAcceleration && metal {
+            env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core=n,b"
+            let dxmtDir = runtime.root.appendingPathComponent("lib/dxmt/x86_64-unix").path
+            fallbackLibs = dxmtDir + ":" + fallbackLibs
+        }
+        let currentDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = currentDyld.isEmpty ? fallbackLibs : fallbackLibs + ":" + currentDyld
+
+        process.arguments = [executable] + arguments
+        process.environment = env
+
+        let pipe = Pipe()
+        process.standardError = pipe
+        process.standardOutput = pipe
+
+        try process.run()
+        self.activeProcess = process
+        self.state = .running
     }
 
     // MARK: - Private Helpers
