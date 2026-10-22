@@ -48,6 +48,10 @@ extension Color {
     static let crossoverBlue = Color(red: 0.04, green: 0.45, blue: 0.88)
     static let crossoverCard = Color(red: 0.20, green: 0.21, blue: 0.23)
     static let crossoverBorder = Color.white.opacity(0.08)
+    static let crossoverDangerBg = Color(red: 0.24, green: 0.11, blue: 0.12)
+    static let crossoverDangerText = Color(red: 0.95, green: 0.35, blue: 0.35)
+    static let crossoverButton = Color(red: 0.22, green: 0.23, blue: 0.25)
+    static let crossoverTextSecondary = Color(white: 0.65)
 
     private static func adaptive(
         light: UInt32,
