@@ -21,6 +21,7 @@ public enum WineRuntime: Sendable {
         public let hasDXVK: Bool
         public let d3dsharedPath: URL?
         public let d3dmetalFrameworkPath: URL?
+        public let cxbottle: URL?
 
         public init(
             root: URL,
@@ -33,7 +34,8 @@ public enum WineRuntime: Sendable {
             hasDXMT: Bool = false,
             hasDXVK: Bool = false,
             d3dsharedPath: URL? = nil,
-            d3dmetalFrameworkPath: URL? = nil
+            d3dmetalFrameworkPath: URL? = nil,
+            cxbottle: URL? = nil
         ) {
             self.root = root
             self.wineloader = wineloader
@@ -46,6 +48,7 @@ public enum WineRuntime: Sendable {
             self.hasDXVK = hasDXVK
             self.d3dsharedPath = d3dsharedPath
             self.d3dmetalFrameworkPath = d3dmetalFrameworkPath
+            self.cxbottle = cxbottle
         }
     }
 
@@ -210,6 +213,19 @@ public enum WineRuntime: Sendable {
         let hasD3DMetal = d3dmetalFwk != nil
         let hasMetalAcceleration = hasD3DMetal || hasDXMT
 
+        var cxbottleURL: URL?
+        let candidateCxbottles = [
+            directory.appendingPathComponent("bin/cxbottle"),
+            directory.appendingPathComponent("share/crossover/cxbottle"),
+            directory.appendingPathComponent("CrossOver-Hosted Application/cxbottle")
+        ]
+        for candidate in candidateCxbottles {
+            if fm.isExecutableFile(atPath: candidate.path) {
+                cxbottleURL = candidate
+                break
+            }
+        }
+
         return Locations(
             root: directory,
             wineloader: wineloader,
@@ -221,28 +237,55 @@ public enum WineRuntime: Sendable {
             hasDXMT: hasDXMT,
             hasDXVK: hasDXVK,
             d3dsharedPath: d3dshared,
-            d3dmetalFrameworkPath: d3dmetalFwk
+            d3dmetalFrameworkPath: d3dmetalFwk,
+            cxbottle: cxbottleURL
         )
     }
 
-    /// Checks whether Rosetta 2 translation is functional on an Apple Silicon host.
-    nonisolated public static var isRosettaAvailable: Bool {
-        #if arch(arm64)
-        // Check if Rosetta 2 translation daemon or oahd is functional
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
-        process.arguments = ["-x86_64", "/usr/bin/true"]
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
+    /// Directory where CrossOver stores its user bottles on macOS.
+    nonisolated public static var crossoverBottlesDirectory: URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first?
+        .appendingPathComponent("CrossOver", isDirectory: true)
+        .appendingPathComponent("Bottles", isDirectory: true)
+        ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/CrossOver/Bottles", isDirectory: true)
+    }
+
+    /// Discovers existing CrossOver bottles on the host system.
+    nonisolated public static func existingCrossOverBottles() -> [(name: String, url: URL)] {
+        let dir = crossoverBottlesDirectory
+        guard let items = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return []
         }
+        return items.compactMap { url -> (name: String, url: URL)? in
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                let driveC = url.appendingPathComponent("drive_c")
+                let hasC = FileManager.default.fileExists(atPath: driveC.path)
+                let hasConf = FileManager.default.fileExists(atPath: url.appendingPathComponent("cxbottle.conf").path)
+                if hasC || hasConf {
+                    return (name: url.lastPathComponent, url: url)
+                }
+            }
+            return nil
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Checks whether Rosetta 2 translation is functional on an Apple Silicon host.
+    /// Evaluated statically to avoid blocking the main thread or causing
+    /// SwiftUI AttributeGraph update re-entrancy precondition failures.
+    nonisolated public static let isRosettaAvailable: Bool = {
+        #if arch(arm64)
+        // Check for presence of Rosetta 2 oahd / libRosettaRuntime without blocking subprocess execution
+        let oahdPath = "/Library/Apple/usr/libexec/oah/libRosettaRuntime"
+        let altOahdPath = "/usr/libexec/rosetta/oahd"
+        return FileManager.default.fileExists(atPath: oahdPath) || FileManager.default.fileExists(atPath: altOahdPath)
         #else
         return true
         #endif
-    }
+    }()
 }
 
 /// Represents a launchable application or tool inside a Wine bottle prefix.
@@ -421,6 +464,192 @@ public enum WineBottleManager: Sendable {
         killProcess.environment = env
         try? killProcess.run()
         killProcess.waitUntilExit()
+    }
+
+    /// Generates genuine CrossOver `cxbottle.conf` file contents.
+    public static func generateCrossOverConfig(
+        template: String = "win11_64",
+        wineSettings: WineBottleSettings = WineBottleSettings(),
+        bottleID: UUID = UUID()
+    ) -> String {
+        let backendStr: String
+        switch wineSettings.backend {
+        case .auto, .d3dmetal: backendStr = "d3dmetal"
+        case .dxmt: backendStr = "dxmt"
+        case .dxvk: backendStr = "dxvk"
+        case .wined3d: backendStr = "wined3d"
+        }
+
+        var envLines = [
+            "\"CX_BOTTLE_CREATOR_APPID\" = \"com.codeweavers.unknown\"",
+            "\"CX_GRAPHICS_BACKEND\" = \"\(backendStr)\"",
+            "\"ROSETTA_ADVERTISE_AVX\" = \"1\"",
+            "\"DOTNET_EnableWriteXorExecute\" = \"0\"",
+            "\"WINE_WAIT_CHILD_PIPE_IGNORE\" = \"launcher.exe;GenshinImpact.exe;YuanShen.exe;ZFGameBrowser.exe;crashpad_handler.exe\""
+        ]
+        if wineSettings.msyncEnabled {
+            envLines.append("\"WINEMSYNC\" = \"1\"")
+        }
+        if wineSettings.metalFXEnabled {
+            envLines.append("\"D3DM_ENABLE_METALFX\" = \"1\"")
+            envLines.append("\"DXMT_ENABLE_NVEXT\" = \"1\"")
+        }
+        if wineSettings.hudEnabled {
+            envLines.append("\"MTL_HUD_ENABLED\" = \"1\"")
+        }
+        if wineSettings.retinaMode {
+            envLines.append("\"WINE_MAC_HIGH_RES\" = \"1\"")
+        }
+
+        return """
+        ;;----------------------------------------------------------------------
+        ;;  CrossOver Bottle Configuration File
+        ;;----------------------------------------------------------------------
+        [Bottle]
+        "MenuRoot" = "/Windows Applications"
+        "MenuStrip" = "1"
+        "BottleID" = "\(bottleID.uuidString)"
+        "Version" = "26.3.0.39832"
+        "Timestamp" = "20260715T103801Z"
+        "Encoding" = "UTF-8"
+        "Template" = "\(template)"
+        "MenuMode" = "install"
+        "AssocMode" = "install"
+        "WineArch" = "win64"
+
+        [ManagedUpdatePolicy]
+        "^\\\\.wineserver$" = "Delete"
+        "^desktopdata(?:/|$)" = "LinkDir"
+        "^windata(?:/|$)" = "LinkDir"
+        "^cxbottle\\\\.conf$" = "Link,ReplaceFiles"
+        "^system\\\\.reg$" = "Registry,ReplaceFiles,ReplaceConflicting"
+        "^userdef\\\\.reg$" = "Registry,ReplaceConflicting"
+        "^user\\\\.reg$" = "Registry,ReplaceConflicting"
+
+        [EnvironmentVariables]
+        \(envLines.joined(separator: "\n"))
+        """
+    }
+
+    /// Links an existing CrossOver bottle directly into a Macport VM bundle.
+    public static func linkCrossOverBottle(
+        named bottleName: String,
+        into bundle: URL
+    ) throws {
+        let fm = FileManager.default
+        let sourceURL = WineRuntime.crossoverBottlesDirectory.appendingPathComponent(bottleName, isDirectory: true)
+        guard fm.fileExists(atPath: sourceURL.path) else {
+            throw EngineError.operationFailed("CrossOver bottle '\(bottleName)' was not found at \(sourceURL.path)")
+        }
+
+        let destination = bottleURL(for: bundle)
+        if fm.fileExists(atPath: destination.path) {
+            try? fm.removeItem(at: destination)
+        }
+        try fm.createSymbolicLink(at: destination, withDestinationURL: sourceURL)
+    }
+
+    /// Creates an authentic CrossOver-grade bottle prefix with complete template and config structure.
+    public static func createBottle(
+        in bundle: URL,
+        name: String,
+        template: String = "win11_64",
+        wineSettings: WineBottleSettings = WineBottleSettings(),
+        runtime: WineRuntime.Locations
+    ) throws {
+        let fm = FileManager.default
+        let bundleBottle = bottleURL(for: bundle)
+
+        // If user requested linking to an existing CrossOver bottle:
+        if let linked = wineSettings.linkedCrossOverBottle, !linked.isEmpty {
+            try linkCrossOverBottle(named: linked, into: bundle)
+            return
+        }
+
+        // If CrossOver's cxbottle utility is available, create authentic CrossOver bottle
+        if let cxbottle = runtime.cxbottle {
+            let sanitizedName = name
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let coBottlesDir = WineRuntime.crossoverBottlesDirectory
+            let targetBottleURL = coBottlesDir.appendingPathComponent(sanitizedName, isDirectory: true)
+
+            if !fm.fileExists(atPath: targetBottleURL.path) {
+                let proc = Process()
+                proc.executableURL = cxbottle
+                proc.arguments = ["--bottle", sanitizedName, "--create", "--template", template]
+                var env = ProcessInfo.processInfo.environment
+                env["CX_ROOT"] = runtime.root.path
+                proc.environment = env
+                try proc.run()
+                proc.waitUntilExit()
+            }
+
+            if fm.fileExists(atPath: targetBottleURL.path) {
+                // Link into Macport VM bundle
+                if fm.fileExists(atPath: bundleBottle.path) {
+                    try? fm.removeItem(at: bundleBottle)
+                }
+                try fm.createSymbolicLink(at: bundleBottle, withDestinationURL: targetBottleURL)
+
+                // Write/update cxbottle.conf with gaming settings
+                let confContent = generateCrossOverConfig(template: template, wineSettings: wineSettings)
+                let confURL = targetBottleURL.appendingPathComponent("cxbottle.conf")
+                try? confContent.write(to: confURL, atomically: true, encoding: .utf8)
+                return
+            }
+        }
+
+        // Fallback or Standalone Wine Bottle Creation:
+        try fm.createDirectory(at: bundleBottle, withIntermediateDirectories: true)
+
+        // Setup dosdevices
+        let dosdevices = bundleBottle.appendingPathComponent("dosdevices", isDirectory: true)
+        try fm.createDirectory(at: dosdevices, withIntermediateDirectories: true)
+        let linkC = dosdevices.appendingPathComponent("c:")
+        if !fm.fileExists(atPath: linkC.path) {
+            try? fm.createSymbolicLink(at: linkC, withDestinationURL: URL(fileURLWithPath: "../drive_c"))
+        }
+        let linkY = dosdevices.appendingPathComponent("y:")
+        if !fm.fileExists(atPath: linkY.path) {
+            try? fm.createSymbolicLink(at: linkY, withDestinationURL: URL(fileURLWithPath: NSHomeDirectory()))
+        }
+        let linkZ = dosdevices.appendingPathComponent("z:")
+        if !fm.fileExists(atPath: linkZ.path) {
+            try? fm.createSymbolicLink(at: linkZ, withDestinationURL: URL(fileURLWithPath: "/"))
+        }
+
+        // Write cxbottle.conf
+        let confContent = generateCrossOverConfig(template: template, wineSettings: wineSettings)
+        try confContent.write(to: bundleBottle.appendingPathComponent("cxbottle.conf"), atomically: true, encoding: .utf8)
+
+        // Initialize system.reg placeholder to prevent wine race condition
+        let sysReg = bundleBottle.appendingPathComponent("system.reg")
+        if !fm.fileExists(atPath: sysReg.path) {
+            let initialReg = "WINE REGISTRY Version 2\n#arch=win64\n"
+            try? initialReg.write(to: sysReg, atomically: true, encoding: .utf8)
+        }
+
+        // Run wineboot --init
+        let process = Process()
+        if let boot = runtime.wineboot {
+            process.executableURL = boot
+            process.arguments = ["--init"]
+        } else {
+            process.executableURL = runtime.wineloader
+            process.arguments = ["wineboot", "--init"]
+        }
+
+        var env = ProcessInfo.processInfo.environment
+        env["WINEPREFIX"] = bundleBottle.path
+        env["WINEDEBUG"] = "-all"
+        env["ROSETTA_ADVERTISE_AVX"] = "1"
+        env["DOTNET_EnableWriteXorExecute"] = "0"
+        process.environment = env
+
+        try process.run()
+        process.waitUntilExit()
     }
 }
 

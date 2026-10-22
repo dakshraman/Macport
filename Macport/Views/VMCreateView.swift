@@ -119,6 +119,17 @@ struct VMCreateView: View {
 
     @State private var selectedProfile: UsageProfile = .productivity
 
+    // MARK: - Wine / CrossOver Bottle State
+
+    @State private var selectedBottleTemplate: String = "win11_64"
+    @State private var selectedCrossOverBottle: String = ""
+    @State private var isLinkingExistingBottle: Bool = false
+    @State private var selectedGraphicsBackend: GraphicsBackend = .auto
+    @State private var msyncEnabled: Bool = true
+    @State private var metalFXEnabled: Bool = true
+    @State private var hudEnabled: Bool = false
+    @State private var existingCrossOverBottles: [(name: String, url: URL)] = []
+
     // MARK: - Step 3: Hardware & Sharing State
 
     @State private var cpuCount: Int = 4
@@ -177,6 +188,7 @@ struct VMCreateView: View {
         .background(Color.macportWindow)
         .onAppear {
             applyProfileDefaults()
+            existingCrossOverBottles = WineRuntime.existingCrossOverBottles()
         }
     }
 
@@ -559,39 +571,127 @@ struct VMCreateView: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
             }
 
-            // Fine-tuning Hardware
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Hardware Allocation")
-                    .font(.headline)
-
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Processors")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Stepper("\(cpuCount) vCPUs", value: $cpuCount, in: 1...maxHostCPUs)
-                            .font(.system(size: 12, design: .monospaced))
+            if selectedOS == .windowsApp {
+                // CrossOver Bottle Architecture & Gaming Settings
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "gamecontroller.fill")
+                            .foregroundStyle(Color.macportAccent)
+                        Text("CrossOver Bottle Architecture & Gaming Settings")
+                            .font(.headline)
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Memory (RAM)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Stepper("\(memoryGB) GB", value: $memoryGB, in: 2...maxHostMemoryGB)
-                            .font(.system(size: 12, design: .monospaced))
+                    if !existingCrossOverBottles.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Bottle Origin")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            Picker("", selection: $isLinkingExistingBottle) {
+                                Text("Create New Clean Bottle").tag(false)
+                                Text("Link Existing CrossOver Bottle").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+
+                            if isLinkingExistingBottle {
+                                Picker("Select CrossOver Bottle", selection: $selectedCrossOverBottle) {
+                                    Text("Choose a Bottle…").tag("")
+                                    ForEach(existingCrossOverBottles, id: \.name) { b in
+                                        Text(b.name).tag(b.name)
+                                    }
+                                }
+                                .onChange(of: selectedCrossOverBottle) { _, newBottle in
+                                    if !newBottle.isEmpty {
+                                        name = newBottle
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Storage (NVMe)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Stepper("\(diskGB) GB", value: $diskGB, in: 16...1024, step: 16)
-                            .font(.system(size: 12, design: .monospaced))
+                    if !isLinkingExistingBottle {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Windows Bottle Template")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            Picker("", selection: $selectedBottleTemplate) {
+                                Text("Windows 11 64-bit (win11_64) — Recommended for D3DMetal / GPTK").tag("win11_64")
+                                Text("Windows 10 64-bit (win10_64)").tag("win10_64")
+                                Text("Windows 7 64-bit (win7_64)").tag("win7_64")
+                            }
+                            .pickerStyle(.menu)
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
                     }
+
+                    // Graphics Backend & Synchronization
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Graphics Backend")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Picker("", selection: $selectedGraphicsBackend) {
+                                ForEach(GraphicsBackend.allCases) { b in
+                                    Text(b.displayName).tag(b)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        Divider()
+
+                        Toggle("MSync (High-Performance Mutex Synchronization)", isOn: $msyncEnabled)
+                            .font(.system(size: 12))
+
+                        Toggle("Apple MetalFX Temporal / Spatial Upscaling", isOn: $metalFXEnabled)
+                            .font(.system(size: 12))
+
+                        Toggle("Metal Performance HUD (FPS / Frame-Time Counter)", isOn: $hudEnabled)
+                            .font(.system(size: 12))
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
                 }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+            } else {
+                // Fine-tuning Hardware
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Hardware Allocation")
+                        .font(.headline)
+
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Processors")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Stepper("\(cpuCount) vCPUs", value: $cpuCount, in: 1...maxHostCPUs)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Memory (RAM)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Stepper("\(memoryGB) GB", value: $memoryGB, in: 2...maxHostMemoryGB)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Storage (NVMe)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Stepper("\(diskGB) GB", value: $diskGB, in: 16...1024, step: 16)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                }
             }
         }
     }
@@ -930,6 +1030,17 @@ struct VMCreateView: View {
 
     private func makeConfiguration() -> VMConfiguration {
         let boot: BootSource = installMediaPath.map { .installMedia(path: $0) } ?? .diskOnly
+        var wineSettings: WineBottleSettings? = nil
+        if selectedOS.guestKind == .windowsApp {
+            wineSettings = WineBottleSettings(
+                backend: selectedGraphicsBackend,
+                msyncEnabled: msyncEnabled,
+                metalFXEnabled: metalFXEnabled,
+                hudEnabled: hudEnabled,
+                bottleTemplate: selectedBottleTemplate,
+                linkedCrossOverBottle: isLinkingExistingBottle && !selectedCrossOverBottle.isEmpty ? selectedCrossOverBottle : nil
+            )
+        }
         return VMConfiguration(
             name: name,
             guest: selectedOS.guestKind,
@@ -940,7 +1051,8 @@ struct VMCreateView: View {
             sharedFolders: resolvedSharedFolders(),
             boot: boot,
             tpmEnabled: selectedOS.guestKind.requiresTPM,
-            engineIdentifier: engineChoice == VMConfiguration.automaticEngine ? nil : engineChoice
+            engineIdentifier: engineChoice == VMConfiguration.automaticEngine ? nil : engineChoice,
+            wineSettings: wineSettings
         )
     }
 

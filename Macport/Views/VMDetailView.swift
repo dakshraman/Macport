@@ -675,36 +675,53 @@ struct WineBottleDetailView: View {
     }
 
     private func programCard(_ shortcut: WineProgramShortcut) -> some View {
-        Button(action: { launchProgram(shortcut) }) {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.macportWindowsHue.opacity(0.12))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: shortcut.iconSystemName)
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color.macportWindowsHue)
-                }
+        HStack(spacing: 8) {
+            Button(action: { launchProgram(shortcut) }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.macportWindowsHue.opacity(0.12))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: shortcut.iconSystemName)
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color.macportWindowsHue)
+                    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(shortcut.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    Text("Launch in Bottle")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(shortcut.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(config.wineSettings?.primaryExecutable == shortcut.executable ? "Primary Application" : "Launch in Bottle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(config.wineSettings?.primaryExecutable == shortcut.executable ? Color.macportAccent : .secondary)
+                    }
 
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+            .buttonStyle(.plain)
+
+            Menu {
+                Button("Run Application") {
+                    launchProgram(shortcut)
+                }
+                Button("Set as Primary Executable") {
+                    setAsPrimaryExecutable(shortcut)
+                }
+                Button("Show in Finder") {
+                    NSWorkspace.shared.selectFile(shortcut.executable, inFileViewerRootedAtPath: "")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 20)
         }
-        .buttonStyle(.plain)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(config.wineSettings?.primaryExecutable == shortcut.executable ? Color.macportAccent.opacity(0.6) : Color.macportBorderSubtle, lineWidth: 1))
     }
 
     // MARK: - Built-in Wine Tools Section
@@ -756,6 +773,41 @@ struct WineBottleDetailView: View {
                 .font(.system(size: 14, weight: .bold))
 
             VStack(spacing: 10) {
+                HStack {
+                    Text("Bottle Template")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(config.wineSettings?.bottleTemplate ?? "win11_64")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                }
+
+                if let linked = config.wineSettings?.linkedCrossOverBottle {
+                    Divider()
+                    HStack {
+                        Text("CrossOver Bottle Link")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(linked)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color.macportAccent)
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Active Graphics Backend")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(config.wineSettings?.backend.displayName ?? "Auto (Apple D3DMetal)")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                }
+
+                Divider()
+
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Apple Metal 3D GPU Acceleration (DXMT / D3DMetal)")
@@ -916,6 +968,9 @@ struct WineBottleDetailView: View {
     // MARK: - Actions
 
     private var primaryExecutablePath: String {
+        if let primary = config.wineSettings?.primaryExecutable, !primary.isEmpty {
+            return primary
+        }
         switch config.boot {
         case .installMedia(let path):
             return path
@@ -924,6 +979,15 @@ struct WineBottleDetailView: View {
         default:
             return "Windows Explorer (explorer.exe)"
         }
+    }
+
+    private func setAsPrimaryExecutable(_ shortcut: WineProgramShortcut) {
+        var updated = config
+        var settings = updated.wineSettings ?? WineBottleSettings()
+        settings.primaryExecutable = shortcut.executable
+        updated.wineSettings = settings
+        _ = try? store.save(updated)
+        statusMessage = "Set '\(shortcut.name)' as primary application."
     }
 
     private func refreshBottleData() {

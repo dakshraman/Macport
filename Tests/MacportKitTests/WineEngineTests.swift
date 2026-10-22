@@ -184,6 +184,29 @@ final class WineEngineTests: XCTestCase {
         XCTAssertEqual(decoded.wineSettings?.backend, .auto)
         XCTAssertEqual(decoded.wineSettings?.msyncEnabled, true)
         XCTAssertEqual(decoded.wineSettings?.metalFXEnabled, true)
+        XCTAssertEqual(decoded.wineSettings?.bottleTemplate, "win11_64")
+    }
+
+    func testCrossOverConfigGeneration() {
+        let conf = WineBottleManager.generateCrossOverConfig(
+            template: "win11_64",
+            wineSettings: WineBottleSettings(backend: .d3dmetal, msyncEnabled: true, metalFXEnabled: true, hudEnabled: true)
+        )
+        XCTAssertTrue(conf.contains("\"Template\" = \"win11_64\""))
+        XCTAssertTrue(conf.contains("\"CX_GRAPHICS_BACKEND\" = \"d3dmetal\""))
+        XCTAssertTrue(conf.contains("\"WINEMSYNC\" = \"1\""))
+        XCTAssertTrue(conf.contains("\"D3DM_ENABLE_METALFX\" = \"1\""))
+        XCTAssertTrue(conf.contains("\"MTL_HUD_ENABLED\" = \"1\""))
+        XCTAssertTrue(conf.contains("WINE_WAIT_CHILD_PIPE_IGNORE"))
+    }
+
+    func testExistingCrossOverBottlesDiscovery() {
+        let bottles = WineRuntime.existingCrossOverBottles()
+        // If CrossOver is installed, it should find Genshin bottle
+        if FileManager.default.fileExists(atPath: WineRuntime.crossoverBottlesDirectory.path) {
+            XCTAssertFalse(bottles.isEmpty)
+            XCTAssertTrue(bottles.contains(where: { $0.name == "Genshin" }))
+        }
     }
 
     func testGraphicsBackendDisplayNames() {

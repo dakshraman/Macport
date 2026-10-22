@@ -127,19 +127,40 @@ public struct WineBottleSettings: Codable, Hashable, Sendable {
     public var metalFXEnabled: Bool
     public var hudEnabled: Bool
     public var retinaMode: Bool
+    public var bottleTemplate: String
+    public var linkedCrossOverBottle: String?
+    public var primaryExecutable: String?
 
     public init(
         backend: GraphicsBackend = .auto,
         msyncEnabled: Bool = true,
         metalFXEnabled: Bool = true,
         hudEnabled: Bool = false,
-        retinaMode: Bool = false
+        retinaMode: Bool = false,
+        bottleTemplate: String = "win11_64",
+        linkedCrossOverBottle: String? = nil,
+        primaryExecutable: String? = nil
     ) {
         self.backend = backend
         self.msyncEnabled = msyncEnabled
         self.metalFXEnabled = metalFXEnabled
         self.hudEnabled = hudEnabled
         self.retinaMode = retinaMode
+        self.bottleTemplate = bottleTemplate
+        self.linkedCrossOverBottle = linkedCrossOverBottle
+        self.primaryExecutable = primaryExecutable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.backend = try container.decodeIfPresent(GraphicsBackend.self, forKey: .backend) ?? .auto
+        self.msyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .msyncEnabled) ?? true
+        self.metalFXEnabled = try container.decodeIfPresent(Bool.self, forKey: .metalFXEnabled) ?? true
+        self.hudEnabled = try container.decodeIfPresent(Bool.self, forKey: .hudEnabled) ?? false
+        self.retinaMode = try container.decodeIfPresent(Bool.self, forKey: .retinaMode) ?? false
+        self.bottleTemplate = try container.decodeIfPresent(String.self, forKey: .bottleTemplate) ?? "win11_64"
+        self.linkedCrossOverBottle = try container.decodeIfPresent(String.self, forKey: .linkedCrossOverBottle)
+        self.primaryExecutable = try container.decodeIfPresent(String.self, forKey: .primaryExecutable)
     }
 }
 

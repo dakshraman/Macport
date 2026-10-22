@@ -98,10 +98,18 @@ public final class WineEngine: VMEngine {
         let runtime = try resolveRuntime()
         self.runtimeLocations = runtime
 
-        // Initialize bottle prefix if not already present
+        let wineSettings = config.wineSettings ?? WineBottleSettings()
+
+        // Initialize CrossOver bottle prefix if not already present
         let driveC = bottleURL.appendingPathComponent("drive_c", isDirectory: true)
         if !fm.fileExists(atPath: driveC.path) {
-            try initializeBottle(at: bottleURL, with: runtime)
+            try WineBottleManager.createBottle(
+                in: bundle,
+                name: config.name,
+                template: wineSettings.bottleTemplate,
+                wineSettings: wineSettings,
+                runtime: runtime
+            )
         }
     }
 
@@ -119,6 +127,7 @@ public final class WineEngine: VMEngine {
         do {
             let runtime = try resolveRuntime()
             self.runtimeLocations = runtime
+            let fm = FileManager.default
 
             let process = Process()
             process.executableURL = runtime.wineloader
@@ -130,17 +139,45 @@ public final class WineEngine: VMEngine {
                 runtime: runtime
             )
 
-            // Determine target executable to run
+            // Determine target executable and working directory
             let targetArgs: [String]
-            switch config.boot {
-            case .installMedia(let path):
-                targetArgs = [path]
-            case .kernelImage(let kernel, let commandLine):
-                let cmdArgs = commandLine.isEmpty ? [] : commandLine.components(separatedBy: .whitespaces)
-                targetArgs = [kernel] + cmdArgs
-            default:
-                // Default to wine's built-in explorer or command shell
-                targetArgs = ["explorer.exe"]
+            var workingDir: URL?
+
+            if let primary = config.wineSettings?.primaryExecutable, !primary.isEmpty {
+                targetArgs = [primary]
+                if primary.hasPrefix("/") {
+                    workingDir = URL(fileURLWithPath: primary).deletingLastPathComponent()
+                }
+            } else {
+                let shortcuts = WineBottleManager.scanInstalledShortcuts(in: bundle)
+                // Prefer installed launcher/game over installer media
+                if let mainShortcut = shortcuts.first(where: {
+                    let low = $0.name.lowercased()
+                    return low.contains("launcher") || low.contains("game") || low.contains("genshin") || low.contains("steam")
+                }) ?? shortcuts.first {
+                    targetArgs = [mainShortcut.executable]
+                    workingDir = URL(fileURLWithPath: mainShortcut.executable).deletingLastPathComponent()
+                } else {
+                    switch config.boot {
+                    case .installMedia(let path):
+                        targetArgs = [path]
+                        workingDir = URL(fileURLWithPath: path).deletingLastPathComponent()
+                    case .kernelImage(let kernel, let commandLine):
+                        let cmdArgs = commandLine.isEmpty ? [] : commandLine.components(separatedBy: .whitespaces)
+                        targetArgs = [kernel] + cmdArgs
+                    default:
+                        targetArgs = ["explorer.exe"]
+                    }
+                }
+            }
+
+            if let wd = workingDir, fm.fileExists(atPath: wd.path) {
+                process.currentDirectoryURL = wd
+            } else {
+                let driveC = WineBottleManager.driveCURL(for: bundle)
+                if fm.fileExists(atPath: driveC.path) {
+                    process.currentDirectoryURL = driveC
+                }
             }
 
             process.arguments = targetArgs
@@ -234,9 +271,31 @@ public final class WineEngine: VMEngine {
         process.arguments = [executable] + arguments
         process.environment = env
 
+        if executable.hasPrefix("/") {
+            let dir = URL(fileURLWithPath: executable).deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: dir.path) {
+                process.currentDirectoryURL = dir
+            }
+        } else {
+            let driveC = WineBottleManager.driveCURL(for: bundle)
+            if FileManager.default.fileExists(atPath: driveC.path) {
+                process.currentDirectoryURL = driveC
+            }
+        }
+
         let pipe = Pipe()
         process.standardError = pipe
         process.standardOutput = pipe
+
+        process.terminationHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.state == .running {
+                    self.state = .stopped
+                }
+                self.activeProcess = nil
+            }
+        }
 
         try process.run()
         self.activeProcess = process
@@ -254,6 +313,7 @@ public final class WineEngine: VMEngine {
 
         // 1. Core Bottle Paths & Logging
         env["WINEPREFIX"] = bottleURL.path
+        env["CX_BOTTLE"] = bottleURL.resolvingSymlinksInPath().lastPathComponent
         env["WINEDEBUG"] = "-all"
         env["DISPLAY"] = ":0"
 
@@ -265,7 +325,7 @@ public final class WineEngine: VMEngine {
         }
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env["DOTNET_EnableWriteXorExecute"] = "0"
-        env["WINE_WAIT_CHILD_PIPE_IGNORE"] = "launcher.exe"
+        env["WINE_WAIT_CHILD_PIPE_IGNORE"] = "launcher.exe;GenshinImpact.exe;YuanShen.exe;ZFGameBrowser.exe;crashpad_handler.exe"
 
         if settings.hudEnabled {
             env["MTL_HUD_ENABLED"] = "1"
