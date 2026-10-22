@@ -19,53 +19,12 @@ struct ParallelsVMToolbar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Back to Control Center button
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    ui.viewMode = .gallery
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Control Center")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.macportInset))
-            }
-            .buttonStyle(.plain)
-            .help("Back to Control Center Gallery")
-
-            Button {
-                openWindow(value: config.id)
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    ui.viewMode = .gallery
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "macwindow.on.rectangle")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Dedicated Window")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.macportAccent.opacity(0.15)))
-            }
-            .buttonStyle(.plain)
-            .help("Pop this virtual machine out into its own dedicated window")
-
-            Divider()
-                .frame(height: 20)
-
             // VM Identity
-            GuestAvatar(guest: config.guest, size: 32)
+            GuestAvatar(guest: config.guest, size: 30)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(config.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Text(config.guest.displayName)
@@ -146,20 +105,20 @@ struct ParallelsVMToolbar: View {
             Divider()
                 .frame(height: 18)
 
-            // Snapshots (Parallels Style)
+            // Snapshots (Icon button to prevent label truncation)
             Button {
                 ui.isPresentingSnapshots = true
             } label: {
-                Label("Snapshots", systemImage: "camera")
+                Image(systemName: "camera")
             }
             .controlSize(.regular)
-            .help("Manage & restore snapshots")
+            .help("Snapshots")
 
-            // Machine Settings (Configure)
+            // Machine Settings / Configure (Icon button to prevent label truncation)
             Button {
                 ui.isPresentingSettings = true
             } label: {
-                Label("Configure", systemImage: "gearshape")
+                Image(systemName: "gearshape")
             }
             .controlSize(.regular)
             .help("Machine Settings (CPU, RAM, Disks, Sharing)")
@@ -220,17 +179,35 @@ struct ParallelsVMToolbar: View {
             .controlSize(.regular)
             .help("Optical & Driver Media")
 
-            // Parallels Quick Actions Menu (Keys & Capture)
+            // Parallels Quick Actions & Export Menu
             Menu {
-                if vmState.isActive {
-                    Button("Send Ctrl + Alt + Delete") {
-                        sendCtrlAltDel()
+                Section("Mac App Integration") {
+                    Button("Add to Applications") {
+                        exportVM(to: .applications)
+                    }
+                    Button("Add to Desktop") {
+                        exportVM(to: .desktop)
+                    }
+                }
+
+                Section("Display & Window") {
+                    Button("Dedicated Window") {
+                        openWindow(value: config.id)
                     }
                     Button("Take Screenshot to Desktop") {
                         takeScreenshot()
                     }
-                    Divider()
                 }
+
+                if vmState.isActive {
+                    Section("Guest Control") {
+                        Button("Send Ctrl + Alt + Delete") {
+                            sendCtrlAltDel()
+                        }
+                    }
+                }
+
+                Divider()
 
                 Button("Clone Machine…") {
                     ui.cloneTarget = config
@@ -301,6 +278,20 @@ struct ParallelsVMToolbar: View {
             let fileURL = desktopURL.appendingPathComponent(filename)
             try? pngData.write(to: fileURL)
             NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
+    }
+
+    private func exportVM(to destination: MacportAppPublisher.Destination) {
+        do {
+            let appURL = try MacportAppPublisher.exportVMLauncherApp(
+                vmId: config.id,
+                vmName: config.name,
+                guest: config.guest,
+                to: destination
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            print("Failed to export VM: \(error.localizedDescription)")
         }
     }
 }
