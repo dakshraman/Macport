@@ -296,14 +296,22 @@ public final class WineEngine: VMEngine {
 
         process.environment = env
 
+        let driveC = WineBottleManager.driveCURL(for: bundle)
         if executable.hasPrefix("/") {
             let dir = URL(fileURLWithPath: executable).deletingLastPathComponent()
             if FileManager.default.fileExists(atPath: dir.path) {
                 process.currentDirectoryURL = dir
             }
         } else {
-            let driveC = WineBottleManager.driveCURL(for: bundle)
-            if FileManager.default.fileExists(atPath: driveC.path) {
+            var clean = executable.replacingOccurrences(of: "\\", with: "/")
+            if clean.lowercased().hasPrefix("c:/") {
+                clean = String(clean.dropFirst(3))
+            }
+            let candidate = driveC.appendingPathComponent(clean)
+            let parent = candidate.deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: parent.path) {
+                process.currentDirectoryURL = parent
+            } else if FileManager.default.fileExists(atPath: driveC.path) {
                 process.currentDirectoryURL = driveC
             }
         }
@@ -361,7 +369,7 @@ public final class WineEngine: VMEngine {
         }
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env["DOTNET_EnableWriteXorExecute"] = "0"
-        env["WINE_WAIT_CHILD_PIPE_IGNORE"] = "launcher.exe;GenshinImpact.exe;YuanShen.exe;ZFGameBrowser.exe;crashpad_handler.exe"
+        env["WINE_WAIT_CHILD_PIPE_IGNORE"] = "launcher.exe;GenshinImpact.exe;YuanShen.exe;ZenlessZoneZero.exe;StarRail.exe;ZFGameBrowser.exe;crashpad_handler.exe"
 
         if settings.hudEnabled {
             env["MTL_HUD_ENABLED"] = "1"

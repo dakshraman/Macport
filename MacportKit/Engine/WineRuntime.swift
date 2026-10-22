@@ -467,7 +467,27 @@ public enum WineBottleManager: Sendable {
                     let shortcutName = fileURL.deletingPathExtension().lastPathComponent
                     if isBlacklisted(shortcutName) { continue }
 
-                    if let targetExe = extractTargetFromLnk(at: fileURL, driveC: driveC) {
+                    if var targetExe = extractTargetFromLnk(at: fileURL, driveC: driveC) {
+                        let lowShort = shortcutName.lowercased()
+                        if targetExe.lowercased().hasSuffix("launcher.exe") {
+                            if lowShort.contains("zenless") || lowShort.contains("zzz") {
+                                let candidate = driveC.appendingPathComponent("Program Files/HoYoPlay/games/ZenlessZoneZero Game/ZenlessZoneZero.exe")
+                                if fm.fileExists(atPath: candidate.path) {
+                                    targetExe = candidate.path
+                                }
+                            } else if lowShort.contains("genshin") {
+                                let candidate = driveC.appendingPathComponent("Program Files/HoYoPlay/games/Genshin Impact game/GenshinImpact.exe")
+                                if fm.fileExists(atPath: candidate.path) {
+                                    targetExe = candidate.path
+                                }
+                            } else if lowShort.contains("star rail") || lowShort.contains("starrail") {
+                                let candidate = driveC.appendingPathComponent("Program Files/HoYoPlay/games/Star Rail/StarRail.exe")
+                                if fm.fileExists(atPath: candidate.path) {
+                                    targetExe = candidate.path
+                                }
+                            }
+                        }
+
                         let baseExeName = URL(fileURLWithPath: targetExe).deletingPathExtension().lastPathComponent
                         if isBlacklisted(baseExeName) { continue }
 
@@ -476,7 +496,7 @@ public enum WineBottleManager: Sendable {
                             seenNames.insert(shortcutName.lowercased())
 
                             let icon = findIcon(for: shortcutName, executable: targetExe, in: actualBottle)
-                            let iconSys = shortcutName.lowercased().contains("genshin") || shortcutName.lowercased().contains("game") || shortcutName.lowercased().contains("steam") ? "gamecontroller.fill" : "app.fill"
+                            let iconSys = shortcutName.lowercased().contains("genshin") || shortcutName.lowercased().contains("zenless") || shortcutName.lowercased().contains("game") || shortcutName.lowercased().contains("steam") ? "gamecontroller.fill" : "app.fill"
 
                             results.append(WineProgramShortcut(
                                 id: targetExe,
@@ -534,6 +554,48 @@ public enum WineBottleManager: Sendable {
                         }
                     }
                 }
+
+                // Also scan known game subdirectories like HoYoPlay/games/* or Steam/steamapps/common/*
+                let gameSubDirs = [
+                    appFolder.appendingPathComponent("games", isDirectory: true),
+                    appFolder.appendingPathComponent("Games", isDirectory: true),
+                    appFolder.appendingPathComponent("steamapps/common", isDirectory: true)
+                ]
+                for subDir in gameSubDirs where fm.fileExists(atPath: subDir.path) {
+                    if let gameFolders = try? fm.contentsOfDirectory(at: subDir, includingPropertiesForKeys: nil) {
+                        for gFolder in gameFolders {
+                            if let gItems = try? fm.contentsOfDirectory(at: gFolder, includingPropertiesForKeys: nil) {
+                                for item in gItems where item.pathExtension.lowercased() == "exe" {
+                                    let exeName = item.deletingPathExtension().lastPathComponent
+                                    if isBlacklisted(exeName) { continue }
+                                    let path = item.path
+                                    let gameDisplayName: String = {
+                                        let low = exeName.lowercased()
+                                        if low == "zenlesszonezero" { return "Zenless Zone Zero" }
+                                        if low == "genshinimpact" { return "Genshin Impact" }
+                                        if low == "starrail" { return "Honkai: Star Rail" }
+                                        return exeName
+                                    }()
+
+                                    if !seenExecutables.contains(path) && !seenNames.contains(gameDisplayName.lowercased()) {
+                                        seenExecutables.insert(path)
+                                        seenNames.insert(gameDisplayName.lowercased())
+                                        let icon = findIcon(for: gameDisplayName, executable: path, in: actualBottle)
+                                        results.append(WineProgramShortcut(
+                                            id: path,
+                                            name: gameDisplayName,
+                                            executable: path,
+                                            arguments: [],
+                                            iconSystemName: "gamecontroller.fill",
+                                            iconURL: icon,
+                                            isBuiltIn: false
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -557,6 +619,12 @@ public enum WineBottleManager: Sendable {
                 for file in files where file.pathExtension.lowercased() == "png" {
                     let fLow = file.lastPathComponent.lowercased()
                     if (lowName.contains("genshin") || lowExe.contains("genshin")) && (fLow.contains("hk4e") || fLow.contains("gameicon")) {
+                        return file
+                    }
+                    if (lowName.contains("zenless") || lowExe.contains("zenless") || lowName.contains("zzz")) && (fLow.contains("nap") || fLow.contains("zenless")) {
+                        return file
+                    }
+                    if (lowName.contains("starrail") || lowExe.contains("starrail") || lowName.contains("honkai")) && (fLow.contains("hkrpg") || fLow.contains("starrail")) {
                         return file
                     }
                     if (lowName.contains("hoyoplay") || lowExe.contains("launcher")) && fLow.contains("launcher") {
