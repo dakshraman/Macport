@@ -93,8 +93,8 @@ struct ContentView: View {
         .tint(.macportAccent)
         .onAppear {
             ui.viewMode = .gallery
-            if let logo = NSImage(named: "AppLogo") {
-                NSApp.applicationIconImage = logo
+            if let icon = NSImage(named: "AppIcon") ?? NSImage(named: "AppLogo") {
+                NSApp.applicationIconImage = icon
             }
         }
     }
