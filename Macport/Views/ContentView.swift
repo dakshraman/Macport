@@ -10,42 +10,13 @@ struct ContentView: View {
     @EnvironmentObject private var ui: UIParityState
 
     var body: some View {
-        Group {
-            if ui.viewMode == .gallery {
-                ControlCenterView()
-            } else {
-                NavigationSplitView {
-                    VMLibraryView(selection: $ui.selection)
-                        .navigationSplitViewColumnWidth(min: 232, ideal: 268)
-                } detail: {
-                    detail
-                }
-            }
+        NavigationSplitView {
+            VMLibraryView(selection: $ui.selection)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+        } detail: {
+            detail
         }
-        .navigationTitle(ui.viewMode == .gallery ? "Control Center" : "Macport")
-        .navigationSubtitle(subtitle)
-        .background(Color.macportWindow)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: $ui.viewMode) {
-                    Label("Control Center", systemImage: "square.grid.2x2").tag(ControlCenterViewMode.gallery)
-                    Label("Sidebar", systemImage: "sidebar.left").tag(ControlCenterViewMode.split)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 170)
-                .help("Switch between Control Center and Sidebar view")
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    state.isPresentingCreateSheet = true
-                } label: {
-                    Label("New Virtual Machine", systemImage: "plus")
-                }
-                .help("Create a new virtual machine (⌘N)")
-                .accessibilityLabel("New virtual machine")
-            }
-        }
+        .background(Color.crossoverCanvas)
         .sheet(isPresented: $state.isPresentingCreateSheet) {
             VMCreateView(
                 onCreate: { config in
@@ -114,10 +85,8 @@ struct ContentView: View {
     private var detail: some View {
         if let config = selectedConfig {
             VMDetailView(config: config)
-        } else if store.machines.isEmpty {
-            EmptyStateView()
         } else {
-            NoSelectionView()
+            CrossOverHomeView()
         }
     }
 
