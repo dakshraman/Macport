@@ -350,6 +350,72 @@ struct VMLibraryView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if vmState.isActive {
+                Button("Shut Down") {
+                    Task { await state.stop(id: config.id, graceful: true) }
+                }
+                Button("Force Off", role: .destructive) {
+                    Task { await state.stop(id: config.id, graceful: false) }
+                }
+            } else {
+                Button("Start Virtual Machine") {
+                    state.start(config, in: store)
+                }
+            }
+
+            Divider()
+
+            Button("Add to Applications…") {
+                exportVM(config, to: .applications)
+            }
+
+            Button("Add to Desktop…") {
+                exportVM(config, to: .desktop)
+            }
+
+            Divider()
+
+            Button("Hardware Settings…") {
+                selection = config.id
+                ui.isPresentingSettings = true
+            }
+
+            Button("Snapshots…") {
+                selection = config.id
+                ui.isPresentingSnapshots = true
+            }
+
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([store.bundleURL(for: config)])
+            }
+
+            Divider()
+
+            Button("Clone Machine…") {
+                ui.cloneTarget = config
+            }
+            .disabled(vmState.isActive)
+
+            Button("Delete Machine…", role: .destructive) {
+                ui.deleteTarget = config
+            }
+            .disabled(state.deleteRefusal(for: config) != nil)
+        }
+    }
+
+    private func exportVM(_ config: VMConfiguration, to destination: MacportAppPublisher.Destination) {
+        do {
+            let appURL = try MacportAppPublisher.exportVMLauncherApp(
+                vmId: config.id,
+                vmName: config.name,
+                guest: config.guest,
+                to: destination
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            print("Failed to export VM: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Bottom Install Bar
