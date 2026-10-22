@@ -21,6 +21,7 @@ struct VMDetailView: View {
 
     @State private var showTechnicalDetails = false
     @State private var vmStatusMessage: String?
+    @State private var vmStatusMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,6 +76,26 @@ struct VMDetailView: View {
                             + "or point \(MacportTools.environmentOverride) at a copy, then "
                             + "start the machine again. Macport does not redistribute it."
                     )
+                }
+
+                if let message = vmStatusMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.macportRunning)
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Button(action: { vmStatusMessage = nil }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.crossoverCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportRunning.opacity(0.3), lineWidth: 1))
                 }
 
                 if let message = vmStatusMessage {
@@ -174,11 +195,14 @@ struct VMDetailView: View {
                         actionCardButton(title: "Snapshots…", icon: "camera.badge.clock") {
                             ui.isPresentingSnapshots = true
                         }
+                        actionCardButton(title: "Add to Applications", icon: "app.badge.checkmark") {
+                            exportVM(to: .applications)
+                        }
+                        actionCardButton(title: "Add to Desktop", icon: "desktopcomputer") {
+                            exportVM(to: .desktop)
+                        }
                         actionCardButton(title: "Show in Finder", icon: "folder") {
                             NSWorkspace.shared.activateFileViewerSelecting([store.bundleURL(for: config)])
-                        }
-                        actionCardButton(title: "Clone Machine…", icon: "doc.on.doc") {
-                            ui.cloneTarget = config
                         }
                     }
                 }
@@ -277,6 +301,21 @@ struct VMDetailView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func exportVM(to destination: MacportAppPublisher.Destination) {
+        do {
+            let appURL = try MacportAppPublisher.exportVMLauncherApp(
+                vmId: config.id,
+                vmName: config.name,
+                guest: config.guest,
+                to: destination
+            )
+            vmStatusMessage = "Added '\(config.name)' to \(destination.displayName). Launch directly from Spotlight or Launchpad!"
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            vmStatusMessage = "Failed to export virtual machine: \(error.localizedDescription)"
+        }
     }
 
     private var externalWindowCard: some View {
