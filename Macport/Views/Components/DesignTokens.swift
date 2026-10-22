@@ -41,6 +41,14 @@ extension Color {
     static let macportWindowsHue = adaptive(light: 0x1E5FA8, dark: 0x6FA8E8)
     static let macportMacOSHue = adaptive(light: 0x5B5F66, dark: 0xA4ABB6)
 
+    // MARK: - CrossOver Dark UI Palette
+    static let crossoverSidebar = Color(red: 0.12, green: 0.125, blue: 0.135)
+    static let crossoverCanvas = Color(red: 0.165, green: 0.173, blue: 0.188)
+    static let crossoverInspector = Color(red: 0.145, green: 0.153, blue: 0.165)
+    static let crossoverBlue = Color(red: 0.04, green: 0.45, blue: 0.88)
+    static let crossoverCard = Color(red: 0.20, green: 0.21, blue: 0.23)
+    static let crossoverBorder = Color.white.opacity(0.08)
+
     private static func adaptive(
         light: UInt32,
         dark: UInt32,
