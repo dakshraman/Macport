@@ -940,7 +940,7 @@ public enum MacportAppPublisher: Sendable {
     public static func exportVMLauncherApp(
         vmId: UUID,
         vmName: String,
-        guest: GuestOS,
+        guest: GuestKind,
         to destination: Destination = .applications
     ) throws -> URL {
         let fm = FileManager.default
@@ -981,7 +981,7 @@ public enum MacportAppPublisher: Sendable {
             "NSHighResolutionCapable": true,
             "MacportVMID": vmId.uuidString,
             "MacportVMName": vmName,
-            "MacportGuestOS": guest.rawValue
+            "MacportGuestKind": guest.rawValue
         ]
 
         let plistData = try PropertyListSerialization.data(fromPropertyList: plistDict, format: .xml, options: 0)
