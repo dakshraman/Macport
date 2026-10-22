@@ -162,6 +162,21 @@ final class WineEngineTests: XCTestCase {
         XCTAssertTrue(shortcuts.contains(where: { $0.name == "steam" }))
     }
 
+    func testWineBottleManagerNestedGameScanning() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let hoyoGames = WineBottleManager.driveCURL(for: tempDir).appendingPathComponent("Program Files/HoYoPlay/games/ZenlessZoneZero Game")
+        try FileManager.default.createDirectory(at: hoyoGames, withIntermediateDirectories: true)
+
+        let fakeZZZ = hoyoGames.appendingPathComponent("ZenlessZoneZero.exe")
+        try "fake binary".write(to: fakeZZZ, atomically: true, encoding: .utf8)
+
+        let shortcuts = WineBottleManager.scanInstalledShortcuts(in: tempDir)
+        XCTAssertTrue(shortcuts.contains(where: { $0.name == "Zenless Zone Zero" && $0.executable.hasSuffix("ZenlessZoneZero.exe") }))
+    }
+
     func testWineBottleSettingsDefaultsAndSerialization() throws {
         let settings = WineBottleSettings()
         XCTAssertEqual(settings.backend, .auto)
