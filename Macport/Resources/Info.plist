@@ -30,6 +30,17 @@
 	<string>MIT licensed</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Macport needs microphone access to pass audio input through to a virtual machine.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Macport URL Scheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>macport</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
