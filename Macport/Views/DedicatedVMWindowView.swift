@@ -46,15 +46,6 @@ struct DedicatedVMWindowView: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .background(Color.black)
-        .background(
-            WindowAccessor { window in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if !window.styleMask.contains(.fullScreen) {
-                        window.toggleFullScreen(nil)
-                    }
-                }
-            }
-        )
         .contextMenu {
             displayContextMenu
         }

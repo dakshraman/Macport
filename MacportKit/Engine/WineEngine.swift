@@ -181,8 +181,8 @@ public final class WineEngine: VMEngine {
 
             if let wineBin = runtime.wine, runtime.cxbottle != nil {
                 process.executableURL = wineBin
-                let bottleName = bottleURL.resolvingSymlinksInPath().lastPathComponent
-                process.arguments = ["--bottle", bottleName] + targetArgs
+                let resolvedBottle = bottleURL.resolvingSymlinksInPath()
+                process.arguments = ["--bottle", resolvedBottle.path, "--wait-all"] + targetArgs
             } else {
                 process.executableURL = runtime.wineloader
                 process.arguments = targetArgs

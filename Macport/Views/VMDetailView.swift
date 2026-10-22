@@ -443,14 +443,13 @@ struct VMDetailView: View {
 
 // MARK: - CrossOver-style Wine Bottle Detail View
 
-/// Signature CrossOver-style Bottle Control Center for Windows applications.
+/// Authentic CrossOver / SaaS-grade Bottle Workspace for Windows applications.
 ///
-/// Provides:
-/// 1. Installed Windows applications and launch shortcuts
-/// 2. One-click access to Wine Configuration, Regedit, Task Manager, and Command Prompt
-/// 3. Direct "Run Command…" sheet to execute any .exe or installer in the bottle
-/// 4. Direct Finder access to the virtual C: drive (`drive_c`)
-/// 5. Apple Metal / DXMT GPU and Rosetta 2 AVX performance controls
+/// Features a two-column SaaS layout:
+/// - Center Canvas: Curated icon grid for installed games/apps with authentic artwork,
+///   quick hover-to-play, and primary application configuration.
+/// - Right Inspector: CrossOver-style bottle actions, graphics backends (D3DMetal, DXMT),
+///   gaming engine toggles (MSync, MetalFX, HUD), and Windows control panels.
 @MainActor
 struct WineBottleDetailView: View {
     @EnvironmentObject private var store: VMStore
@@ -464,31 +463,29 @@ struct WineBottleDetailView: View {
     @State private var isPresentingRunCommand = false
     @State private var customCommand = ""
     @State private var customArguments = ""
-    @State private var metalAcceleration = true
-    @State private var avxEmulation = true
     @State private var statusMessage: String?
+    @State private var hoveredShortcutId: String?
 
     private var vmState: VMState { state.state(for: config.id) }
     private var bundleURL: URL { store.bundleURL(for: config) }
+    private var wineSettings: WineBottleSettings { config.wineSettings ?? WineBottleSettings() }
 
     var body: some View {
         VStack(spacing: 0) {
             bottleHeader
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let message = statusMessage {
-                        statusBanner(message)
-                    }
+            HStack(spacing: 0) {
+                // Left & Center: Main Application Library
+                mainCanvas
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    mainApplicationCard
-                    installedProgramsSection
-                    builtInToolsSection
-                    performanceAndGraphicsSection
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                Divider()
+
+                // Right: CrossOver Bottle Actions & Settings Inspector
+                inspectorSidebar
+                    .frame(width: 300)
+                    .background(Color.macportInset.opacity(0.55))
             }
         }
         .background(Color.macportWindow)
@@ -506,106 +503,355 @@ struct WineBottleDetailView: View {
         HStack(spacing: 16) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.macportWindowsHue.opacity(0.15))
-                    .frame(width: 48, height: 48)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.macportWindowsHue.opacity(0.3), Color.macportAccent.opacity(0.2)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 46, height: 46)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+
                 Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 24))
+                    .font(.system(size: 22))
                     .foregroundStyle(Color.macportWindowsHue)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
                     Text(config.name)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
 
+                    // Status Pill
                     HStack(spacing: 5) {
                         Circle()
-                            .fill(vmState.isActive ? Color.macportRunning : Color.macportOff.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                        Text(vmState.isActive ? "Running Natively" : "Stopped")
+                            .fill(vmState.isActive ? Color.macportRunning : Color.macportOff.opacity(0.5))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: vmState.isActive ? Color.macportRunning.opacity(0.8) : .clear, radius: 4)
+                        Text(vmState.isActive ? "Running Natively" : "Ready")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(vmState.isActive ? Color.macportRunning : .secondary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Capsule().fill(Color.macportInset))
+                    .overlay(Capsule().stroke(Color.macportBorderSubtle, lineWidth: 1))
                 }
 
-                HStack(spacing: 8) {
-                    Text("CrossOver / Wine Bottle")
+                // Metadata Badges
+                HStack(spacing: 6) {
+                    Text(wineSettings.bottleTemplate == "win11_64" ? "Windows 11 64-bit" : wineSettings.bottleTemplate)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text("Rosetta 2 x86_64")
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(wineSettings.backend.displayName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.macportAccent)
+                    Text("·").foregroundStyle(.tertiary)
+                    Text("Rosetta 2 AVX")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text("Apple Metal 3D GPU")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    if bottleDiskSize > 0 {
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(MacportFormat.fileSize(bottleDiskSize))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
             Spacer()
 
-            // Header Quick Actions
-            HStack(spacing: 8) {
+            // Header Action Buttons
+            HStack(spacing: 10) {
                 if vmState.isActive {
                     Button(action: { stopBottle() }) {
                         Label("Stop", systemImage: "stop.fill")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.macportDanger)
                     .controlSize(.regular)
                 } else {
                     Button(action: { startMainApp() }) {
                         Label("Run Application", systemImage: "play.fill")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Color.macportAccent)
                     .controlSize(.regular)
+                    .shadow(color: Color.macportAccent.opacity(0.3), radius: 6, y: 2)
                 }
 
                 Button(action: { isPresentingRunCommand = true }) {
                     Label("Run Command…", systemImage: "bolt.fill")
+                        .font(.system(size: 12))
                 }
                 .controlSize(.regular)
 
                 Button(action: { openDriveC() }) {
                     Label("Open C: Drive", systemImage: "folder.fill")
+                        .font(.system(size: 12))
                 }
                 .controlSize(.regular)
 
                 Menu {
-                    Button("Force Quit Bottle (wineserver -k)") {
+                    Button("Simulate Windows Reboot") {
+                        rebootBottle()
+                    }
+                    Button("Force Quit Bottle (wineserver -k)", role: .destructive) {
                         forceQuitBottle()
                     }
-                    Button("Refresh Shortcuts") {
+                    Divider()
+                    Button("Refresh Installed Applications") {
                         refreshBottleData()
                     }
-                    Divider()
                     Button("Reveal Bottle in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([bundleURL])
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16))
                 }
                 .menuStyle(.borderlessButton)
-                .frame(width: 28)
+                .frame(width: 24)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.vertical, 14)
         .background(Color.macportCard)
     }
 
-    // MARK: - Main Application Card
+    // MARK: - Main Canvas (Applications Grid)
 
-    private var mainApplicationCard: some View {
+    private var mainCanvas: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let message = statusMessage {
+                    statusBanner(message)
+                }
+
+                // Installed Applications (CrossOver Icon Collection)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        HStack(spacing: 8) {
+                            Text("Installed Applications")
+                                .font(.system(size: 15, weight: .bold))
+                            if !installedShortcuts.isEmpty {
+                                Text("\(installedShortcuts.count)")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color.macportAccent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.macportAccent.opacity(0.15)))
+                            }
+                        }
+
+                        Spacer()
+
+                        Button {
+                            chooseAndInstallApp()
+                        } label: {
+                            Label("Install Windows App (.exe)…", systemImage: "plus")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    if installedShortcuts.isEmpty {
+                        emptyApplicationsCard
+                    } else {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 130, maximum: 160), spacing: 20)],
+                            spacing: 24
+                        ) {
+                            ForEach(installedShortcuts) { shortcut in
+                                appGridItem(shortcut)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+
+                // Primary Application configuration card
+                primaryApplicationCard
+            }
+            .padding(24)
+        }
+    }
+
+    // MARK: - App Grid Item (CrossOver-style Icon)
+
+    private func appGridItem(_ shortcut: WineProgramShortcut) -> some View {
+        let isPrimary = (wineSettings.primaryExecutable == shortcut.executable)
+        let isHovered = (hoveredShortcutId == shortcut.id)
+
+        return VStack(spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                // Application Icon Container
+                ZStack {
+                    if let iconURL = shortcut.iconURL, let img = NSImage(contentsOf: iconURL) {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 72, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: .black.opacity(isHovered ? 0.35 : 0.2), radius: isHovered ? 8 : 4, y: isHovered ? 4 : 2)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.macportWindowsHue.opacity(0.4), Color.macportAccent.opacity(0.2)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 72, height: 72)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(Color.white.opacity(isHovered ? 0.3 : 0.12), lineWidth: 1)
+                            )
+                            .shadow(color: .black.opacity(isHovered ? 0.3 : 0.2), radius: isHovered ? 8 : 4, y: 3)
+                            .overlay(
+                                Image(systemName: shortcut.iconSystemName)
+                                    .font(.system(size: 30))
+                                    .foregroundStyle(Color.macportWindowsHue)
+                            )
+                    }
+
+                    // Hover Play Overlay
+                    if isHovered {
+                        Circle()
+                            .fill(Color.macportAccent)
+                            .frame(width: 32, height: 32)
+                            .overlay(
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .offset(x: 1)
+                            )
+                            .shadow(color: .black.opacity(0.4), radius: 6, y: 2)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .frame(width: 76, height: 76)
+
+                // Primary App Star Badge
+                if isPrimary {
+                    Circle()
+                        .fill(Color.macportAccent)
+                        .frame(width: 18, height: 18)
+                        .overlay(
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                        )
+                        .offset(x: 4, y: -4)
+                        .shadow(color: Color.macportAccent.opacity(0.6), radius: 3)
+                }
+            }
+
+            // App Title
+            VStack(spacing: 3) {
+                Text(shortcut.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isHovered ? Color.macportAccent : .primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 120)
+
+                if isPrimary {
+                    Text("Primary")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.macportAccent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.macportAccent.opacity(0.12)))
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isHovered ? Color.macportCard : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isHovered ? Color.macportBorderSubtle : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoveredShortcutId = hovering ? shortcut.id : nil
+            }
+        }
+        .onTapGesture(count: 2) {
+            launchProgram(shortcut)
+        }
+        .contextMenu {
+            Button {
+                launchProgram(shortcut)
+            } label: {
+                Label("Launch in Bottle", systemImage: "play.fill")
+            }
+
+            Button {
+                setAsPrimaryExecutable(shortcut)
+            } label: {
+                Label("Set as Primary Executable", systemImage: "star")
+            }
+
+            Divider()
+
+            Button {
+                NSWorkspace.shared.selectFile(shortcut.executable, inFileViewerRootedAtPath: "")
+            } label: {
+                Label("Show in Finder", systemImage: "folder")
+            }
+        }
+    }
+
+    // MARK: - Empty Applications State
+
+    private var emptyApplicationsCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "shippingbox")
+                .font(.system(size: 36))
+                .foregroundStyle(Color.macportWindowsHue.opacity(0.6))
+            VStack(spacing: 4) {
+                Text("No secondary applications found")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Click '+ Install Windows App' to run an installer or game setup into this bottle.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 36)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.macportInset))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.macportBorderSubtle, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        )
+    }
+
+    // MARK: - Primary Application Card
+
+    private var primaryApplicationCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Primary Application")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Primary Executable")
                         .font(.system(size: 13, weight: .bold))
                     Text(primaryExecutablePath)
                         .font(.system(size: 11, design: .monospaced))
@@ -613,6 +859,7 @@ struct WineBottleDetailView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+
                 Spacer()
 
                 Button("Change…") {
@@ -622,6 +869,7 @@ struct WineBottleDetailView: View {
 
                 Button(action: { startMainApp() }) {
                     Label(vmState.isActive ? "Restart" : "Launch", systemImage: "play.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -632,238 +880,232 @@ struct WineBottleDetailView: View {
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
     }
 
-    // MARK: - Installed Programs Section
+    // MARK: - Right Inspector Sidebar (CrossOver Actions & Settings)
 
-    private var installedProgramsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Installed Applications")
-                    .font(.system(size: 14, weight: .bold))
+    private var inspectorSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Section 1: Bottle Actions
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("BOTTLE ACTIONS")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
 
-                Spacer()
-
-                Button("+ Install Windows App (.exe)…") {
-                    chooseAndInstallApp()
-                }
-                .controlSize(.small)
-            }
-
-            if installedShortcuts.isEmpty {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.title2)
-                        .foregroundStyle(Color.macportWindowsHue)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("No secondary applications installed yet")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Click '+ Install Windows App' to run an installer or game setup directly into this bottle.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                    VStack(spacing: 4) {
+                        inspectorActionButton(title: "Run Command…", icon: "terminal.fill") {
+                            isPresentingRunCommand = true
+                        }
+                        inspectorActionButton(title: "Open C: Drive", icon: "folder.fill") {
+                            openDriveC()
+                        }
+                        inspectorActionButton(title: "Install Software…", icon: "plus.circle.fill") {
+                            chooseAndInstallApp()
+                        }
+                        inspectorActionButton(title: "Reboot Bottle", icon: "arrow.clockwise") {
+                            rebootBottle()
+                        }
+                        inspectorActionButton(title: "Quit All Applications", icon: "xmark.octagon.fill", isDestructive: true) {
+                            forceQuitBottle()
+                        }
                     }
-                    Spacer()
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
                 }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                    ForEach(installedShortcuts) { shortcut in
-                        programCard(shortcut)
-                    }
-                }
-            }
-        }
-    }
 
-    private func programCard(_ shortcut: WineProgramShortcut) -> some View {
-        HStack(spacing: 8) {
-            Button(action: { launchProgram(shortcut) }) {
-                HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.macportWindowsHue.opacity(0.12))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: shortcut.iconSystemName)
-                            .font(.system(size: 16))
-                            .foregroundStyle(Color.macportWindowsHue)
-                    }
+                // Section 2: Performance & Graphics Settings
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("GRAPHICS & PERFORMANCE")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(shortcut.name)
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                        Text(config.wineSettings?.primaryExecutable == shortcut.executable ? "Primary Application" : "Launch in Bottle")
-                            .font(.system(size: 10))
-                            .foregroundStyle(config.wineSettings?.primaryExecutable == shortcut.executable ? Color.macportAccent : .secondary)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-            }
-            .buttonStyle(.plain)
-
-            Menu {
-                Button("Run Application") {
-                    launchProgram(shortcut)
-                }
-                Button("Set as Primary Executable") {
-                    setAsPrimaryExecutable(shortcut)
-                }
-                Button("Show in Finder") {
-                    NSWorkspace.shared.selectFile(shortcut.executable, inFileViewerRootedAtPath: "")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .frame(width: 20)
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(config.wineSettings?.primaryExecutable == shortcut.executable ? Color.macportAccent.opacity(0.6) : Color.macportBorderSubtle, lineWidth: 1))
-    }
-
-    // MARK: - Built-in Wine Tools Section
-
-    private var builtInToolsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Windows Control Panels & Built-in Utilities")
-                .font(.system(size: 14, weight: .bold))
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                ForEach(WineBottleManager.builtInTools) { tool in
-                    Button(action: { launchProgram(tool) }) {
-                        HStack(spacing: 10) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.macportAccent.opacity(0.12))
-                                    .frame(width: 36, height: 36)
-                                Image(systemName: tool.iconSystemName)
-                                    .font(.system(size: 16))
-                                    .foregroundStyle(Color.macportAccent)
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Backend Picker
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Graphics Backend")
+                                .font(.system(size: 11, weight: .semibold))
+                            Picker("", selection: Binding(
+                                get: { wineSettings.backend },
+                                set: { newBackend in
+                                    updateSettings { $0.backend = newBackend }
+                                }
+                            )) {
+                                ForEach(GraphicsBackend.allCases) { b in
+                                    Text(b.displayName).tag(b)
+                                }
                             }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(tool.name)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .lineLimit(1)
-                                Text(tool.executable)
-                                    .font(.system(size: 10, design: .monospaced))
+                        Divider()
+
+                        // MSync
+                        Toggle(isOn: Binding(
+                            get: { wineSettings.msyncEnabled },
+                            set: { val in updateSettings { $0.msyncEnabled = val } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("MSync Synchronization")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("High-performance Mach-port locks")
+                                    .font(.system(size: 9))
                                     .foregroundStyle(.secondary)
                             }
-
-                            Spacer(minLength: 0)
                         }
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+
+                        Divider()
+
+                        // MetalFX
+                        Toggle(isOn: Binding(
+                            get: { wineSettings.metalFXEnabled },
+                            set: { val in updateSettings { $0.metalFXEnabled = val } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("MetalFX & NVExt")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Hardware upscaling support")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+
+                        Divider()
+
+                        // Metal HUD
+                        Toggle(isOn: Binding(
+                            get: { wineSettings.hudEnabled },
+                            set: { val in updateSettings { $0.hudEnabled = val } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Metal Performance HUD")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Real-time FPS and GPU overlay")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+
+                        Divider()
+
+                        // Retina High-Res
+                        Toggle(isOn: Binding(
+                            get: { wineSettings.retinaMode },
+                            set: { val in updateSettings { $0.retinaMode = val } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("High Resolution Mode")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Enable Retina DPI scaling")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
                     }
-                    .buttonStyle(.plain)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                }
+
+                // Section 3: Control Panels
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CONTROL PANELS")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    VStack(spacing: 3) {
+                        ForEach(WineBottleManager.builtInTools) { tool in
+                            Button {
+                                launchProgram(tool)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: tool.iconSystemName)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color.macportAccent)
+                                        .frame(width: 18)
+                                    Text(tool.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                }
+
+                // Section 4: Specifications
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("BOTTLE SPECIFICATIONS")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    VStack(spacing: 8) {
+                        specRow(label: "Template", value: wineSettings.bottleTemplate)
+                        specRow(label: "Disk Usage", value: MacportFormat.fileSize(bottleDiskSize))
+                        specRow(label: "Architecture", value: "x86_64 via Rosetta 2")
+                        if let linked = wineSettings.linkedCrossOverBottle {
+                            specRow(label: "Linked Bottle", value: linked)
+                        }
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
                 }
             }
+            .padding(16)
         }
     }
 
-    // MARK: - Performance & Graphics Section
-
-    private var performanceAndGraphicsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Bottle Settings & Performance")
-                .font(.system(size: 14, weight: .bold))
-
-            VStack(spacing: 10) {
-                HStack {
-                    Text("Bottle Template")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(config.wineSettings?.bottleTemplate ?? "win11_64")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                }
-
-                if let linked = config.wineSettings?.linkedCrossOverBottle {
-                    Divider()
-                    HStack {
-                        Text("CrossOver Bottle Link")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(linked)
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color.macportAccent)
-                    }
-                }
-
-                Divider()
-
-                HStack {
-                    Text("Active Graphics Backend")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(config.wineSettings?.backend.displayName ?? "Auto (Apple D3DMetal)")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                }
-
-                Divider()
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Apple Metal 3D GPU Acceleration (DXMT / D3DMetal)")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Translates DirectX 10, 11, and 12 graphics commands directly to Apple Silicon Metal.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $metalAcceleration)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                }
-
-                Divider()
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Rosetta 2 AVX Instruction Set Emulation")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Advertises AVX support to modern games and engines under Rosetta 2.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $avxEmulation)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                }
-
-                Divider()
-
-                HStack {
-                    Text("Bottle Disk Usage")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(MacportFormat.fileSize(bottleDiskSize))
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                }
-
-                Divider()
-
-                HStack {
-                    Text("Idle Memory Overhead")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("0 MB (Zero Hypervisor RAM Overhead)")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color.macportRunning)
-                }
+    private func inspectorActionButton(title: String, icon: String, isDestructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(isDestructive ? Color.macportDanger : Color.macportAccent)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isDestructive ? Color.macportDanger : .primary)
+                Spacer()
             }
-            .padding(14)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.macportCard))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func specRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .lineLimit(1)
         }
     }
 
@@ -981,12 +1223,16 @@ struct WineBottleDetailView: View {
         }
     }
 
-    private func setAsPrimaryExecutable(_ shortcut: WineProgramShortcut) {
+    private func updateSettings(_ mutator: (inout WineBottleSettings) -> Void) {
         var updated = config
         var settings = updated.wineSettings ?? WineBottleSettings()
-        settings.primaryExecutable = shortcut.executable
+        mutator(&settings)
         updated.wineSettings = settings
         _ = try? store.save(updated)
+    }
+
+    private func setAsPrimaryExecutable(_ shortcut: WineProgramShortcut) {
+        updateSettings { $0.primaryExecutable = shortcut.executable }
         statusMessage = "Set '\(shortcut.name)' as primary application."
     }
 
@@ -1013,6 +1259,22 @@ struct WineBottleDetailView: View {
         }
     }
 
+    private func rebootBottle() {
+        Task {
+            do {
+                if let wineEngine = state.instance(for: config.id)?.engine as? WineEngine {
+                    try await wineEngine.launchExecutable("wineboot", arguments: ["-r"], in: bundleURL)
+                } else {
+                    let engine = WineEngine()
+                    try await engine.launchExecutable("wineboot", arguments: ["-r"], in: bundleURL)
+                }
+                statusMessage = "Simulated Windows reboot."
+            } catch {
+                statusMessage = "Reboot failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func forceQuitBottle() {
         do {
             try WineBottleManager.killBottleProcesses(in: bundleURL)
@@ -1034,10 +1296,10 @@ struct WineBottleDetailView: View {
         Task {
             do {
                 if let wineEngine = state.instance(for: config.id)?.engine as? WineEngine {
-                    try await wineEngine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: metalAcceleration)
+                    try await wineEngine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: true)
                 } else {
                     let engine = WineEngine()
-                    try await engine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: metalAcceleration)
+                    try await engine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: true)
                 }
                 statusMessage = "Launched \(shortcut.name) in bottle."
             } catch {
@@ -1054,10 +1316,10 @@ struct WineBottleDetailView: View {
         Task {
             do {
                 if let wineEngine = state.instance(for: config.id)?.engine as? WineEngine {
-                    try await wineEngine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: metalAcceleration)
+                    try await wineEngine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: true)
                 } else {
                     let engine = WineEngine()
-                    try await engine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: metalAcceleration)
+                    try await engine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: true)
                 }
                 statusMessage = "Executed '\(cmd)' in bottle."
             } catch {
@@ -1073,6 +1335,9 @@ struct WineBottleDetailView: View {
         panel.message = "Choose a Windows executable (.exe, .msi) to set as the primary application"
         if panel.runModal() == .OK, let path = panel.url?.path {
             var updated = config
+            var settings = updated.wineSettings ?? WineBottleSettings()
+            settings.primaryExecutable = path
+            updated.wineSettings = settings
             updated.boot = .installMedia(path: path)
             do {
                 _ = try store.save(updated)

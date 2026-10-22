@@ -63,7 +63,7 @@ struct ControlCenterView: View {
         .task {
             try? await Task.sleep(nanoseconds: 400_000_000)
             for config in store.machines {
-                if state.state(for: config.id).isActive {
+                if state.state(for: config.id).isActive && config.guest != .windowsApp {
                     openWindow(value: config.id)
                 }
             }
@@ -317,7 +317,9 @@ struct ControlCenterVMCard: View {
             if !vmState.isActive {
                 state.start(config, in: store)
             }
-            openWindow(value: config.id)
+            if config.guest != .windowsApp {
+                openWindow(value: config.id)
+            }
         }
         .onTapGesture(count: 1) {
             ui.selection = config.id
@@ -490,7 +492,9 @@ struct ControlCenterVMCard: View {
                 } else {
                     Button {
                         state.start(config, in: store)
-                        openWindow(value: config.id)
+                        if config.guest != .windowsApp {
+                            openWindow(value: config.id)
+                        }
                     } label: {
                         Circle()
                             .fill(Color.macportRunning)
@@ -571,7 +575,9 @@ struct ControlCenterVMCard: View {
                 if !vmState.isActive {
                     state.start(config, in: store)
                 }
-                openWindow(value: config.id)
+                if config.guest != .windowsApp {
+                    openWindow(value: config.id)
+                }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "macwindow.on.rectangle")

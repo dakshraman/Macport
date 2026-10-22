@@ -312,6 +312,7 @@ public struct WineProgramShortcut: Identifiable, Hashable, Sendable {
     public let executable: String
     public let arguments: [String]
     public let iconSystemName: String
+    public let iconURL: URL?
     public let isBuiltIn: Bool
 
     public init(
@@ -320,6 +321,7 @@ public struct WineProgramShortcut: Identifiable, Hashable, Sendable {
         executable: String,
         arguments: [String] = [],
         iconSystemName: String,
+        iconURL: URL? = nil,
         isBuiltIn: Bool = false
     ) {
         self.id = id
@@ -327,6 +329,7 @@ public struct WineProgramShortcut: Identifiable, Hashable, Sendable {
         self.executable = executable
         self.arguments = arguments
         self.iconSystemName = iconSystemName
+        self.iconURL = iconURL
         self.isBuiltIn = isBuiltIn
     }
 }
@@ -414,24 +417,45 @@ public enum WineBottleManager: Sendable {
         return total
     }
 
-    /// Scans a bottle for installed Windows applications (.exe / .lnk) in common installation paths.
+    /// Scans a bottle for installed Windows applications (.exe / .lnk) in common installation paths,
+    /// matching CrossOver's authentic curated shortcut model with high-resolution app icon resolution.
     public static func scanInstalledShortcuts(in bundle: URL) -> [WineProgramShortcut] {
         let driveC = driveCURL(for: bundle)
+        let actualBottle = bottleURL(for: bundle).resolvingSymlinksInPath()
         let fm = FileManager.default
         guard fm.fileExists(atPath: driveC.path) else { return [] }
 
         var results: [WineProgramShortcut] = []
-        var seenPaths = Set<String>()
+        var seenExecutables = Set<String>()
+        var seenNames = Set<String>()
 
-        // Search common application locations
-        let searchDirectories: [URL] = [
-            driveC.appendingPathComponent("Program Files", isDirectory: true),
-            driveC.appendingPathComponent("Program Files (x86)", isDirectory: true),
-            driveC.appendingPathComponent("users", isDirectory: true),
+        // Ignored executable keywords (helpers, redistributables, unpackers, uninstallers, wine builtins)
+        let blacklistedTokens: [String] = [
+            "unins", "repair", "update", "crash", "helper", "worker", "safemode", "patch",
+            "7z", "vc_redist", "vcredist", "dxsetup", "redist", "wmplayer", "wordpad", "iexplore",
+            "notepad", "regedit", "winecfg", "taskmgr", "cmd", "explorer", "control", "setup",
+            "feedback", "manual", "website", "dxdiag", "upload_crash", "crashreport"
+        ]
+
+        func isBlacklisted(_ str: String) -> Bool {
+            let low = str.lowercased()
+            return blacklistedTokens.contains { low.contains($0) }
+        }
+
+        // 1. Scan genuine Windows desktop and Start Menu shortcuts (.lnk files)
+        var lnkDirectories: [URL] = [
             driveC.appendingPathComponent("ProgramData/Microsoft/Windows/Start Menu/Programs", isDirectory: true)
         ]
 
-        for dir in searchDirectories where fm.fileExists(atPath: dir.path) {
+        let usersDir = driveC.appendingPathComponent("users", isDirectory: true)
+        if let userDirs = try? fm.contentsOfDirectory(at: usersDir, includingPropertiesForKeys: nil) {
+            for u in userDirs {
+                lnkDirectories.append(u.appendingPathComponent("Desktop", isDirectory: true))
+                lnkDirectories.append(u.appendingPathComponent("AppData/Roaming/Microsoft/Windows/Start Menu/Programs", isDirectory: true))
+            }
+        }
+
+        for dir in lnkDirectories where fm.fileExists(atPath: dir.path) {
             guard let enumerator = fm.enumerator(
                 at: dir,
                 includingPropertiesForKeys: [.isRegularFileKey],
@@ -439,34 +463,157 @@ public enum WineBottleManager: Sendable {
             ) else { continue }
 
             for case let fileURL as URL in enumerator {
-                let ext = fileURL.pathExtension.lowercased()
-                if ext == "exe" {
-                    let filename = fileURL.lastPathComponent
-                    let lowerName = filename.lowercased()
-                    // Filter out uninstaller and helper binaries
-                    if lowerName.contains("unins") || lowerName.contains("update") || lowerName.contains("crash") || lowerName.contains("helper") {
-                        continue
-                    }
+                if fileURL.pathExtension.lowercased() == "lnk" {
+                    let shortcutName = fileURL.deletingPathExtension().lastPathComponent
+                    if isBlacklisted(shortcutName) { continue }
 
-                    let path = fileURL.path
-                    if !seenPaths.contains(path) {
-                        seenPaths.insert(path)
-                        let baseName = fileURL.deletingPathExtension().lastPathComponent
-                        let iconName = baseName.lowercased().contains("steam") ? "gamecontroller.fill" : "app.fill"
-                        results.append(WineProgramShortcut(
-                            id: path,
-                            name: baseName,
-                            executable: path,
-                            arguments: [],
-                            iconSystemName: iconName,
-                            isBuiltIn: false
-                        ))
+                    if let targetExe = extractTargetFromLnk(at: fileURL, driveC: driveC) {
+                        let baseExeName = URL(fileURLWithPath: targetExe).deletingPathExtension().lastPathComponent
+                        if isBlacklisted(baseExeName) { continue }
+
+                        if !seenExecutables.contains(targetExe) && !seenNames.contains(shortcutName.lowercased()) {
+                            seenExecutables.insert(targetExe)
+                            seenNames.insert(shortcutName.lowercased())
+
+                            let icon = findIcon(for: shortcutName, executable: targetExe, in: actualBottle)
+                            let iconSys = shortcutName.lowercased().contains("genshin") || shortcutName.lowercased().contains("game") || shortcutName.lowercased().contains("steam") ? "gamecontroller.fill" : "app.fill"
+
+                            results.append(WineProgramShortcut(
+                                id: targetExe,
+                                name: shortcutName,
+                                executable: targetExe,
+                                arguments: [],
+                                iconSystemName: iconSys,
+                                iconURL: icon,
+                                isBuiltIn: false
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Scan primary Program Files and Program Files (x86) top-level directories
+        let programFilesDirs = [
+            driveC.appendingPathComponent("Program Files", isDirectory: true),
+            driveC.appendingPathComponent("Program Files (x86)", isDirectory: true)
+        ]
+
+        for pDir in programFilesDirs where fm.fileExists(atPath: pDir.path) {
+            guard let appFolders = try? fm.contentsOfDirectory(at: pDir, includingPropertiesForKeys: nil) else { continue }
+            for appFolder in appFolders {
+                let folderName = appFolder.lastPathComponent.lowercased()
+                if folderName.contains("windows") || folderName.contains("common") || folderName.contains("internet") {
+                    continue
+                }
+
+                // Look for root launcher or executable in this folder
+                if let folderItems = try? fm.contentsOfDirectory(at: appFolder, includingPropertiesForKeys: nil) {
+                    for item in folderItems where item.pathExtension.lowercased() == "exe" {
+                        let exeName = item.deletingPathExtension().lastPathComponent
+                        if isBlacklisted(exeName) { continue }
+
+                        let path = item.path
+                        let cleanName = appFolder.lastPathComponent
+                        if !seenExecutables.contains(path) && !seenNames.contains(exeName.lowercased()) {
+                            seenExecutables.insert(path)
+                            seenNames.insert(exeName.lowercased())
+
+                            let icon = findIcon(for: exeName, executable: path, in: actualBottle)
+                            let iconSys = exeName.lowercased().contains("game") || exeName.lowercased().contains("genshin") || exeName.lowercased().contains("steam") ? "gamecontroller.fill" : "app.fill"
+
+                            results.append(WineProgramShortcut(
+                                id: path,
+                                name: exeName,
+                                executable: path,
+                                arguments: [],
+                                iconSystemName: iconSys,
+                                iconURL: icon,
+                                isBuiltIn: false
+                            ))
+                        }
                     }
                 }
             }
         }
 
         return results
+    }
+
+    /// Resolves an authentic extracted application icon from CrossOver's icon cache or local .ico/.png.
+    private static func findIcon(for name: String, executable: String, in bottleURL: URL) -> URL? {
+        let fm = FileManager.default
+        let windataIcons = bottleURL.appendingPathComponent("windata/cxmenu/icons/hicolor", isDirectory: true)
+        let resolutions = ["256x256", "128x128", "96x96", "64x64", "48x48", "32x32"]
+
+        let lowName = name.lowercased()
+        let lowExe = URL(fileURLWithPath: executable).deletingPathExtension().lastPathComponent.lowercased()
+
+        // 1. Check windata extracted icons created by CrossOver
+        for res in resolutions {
+            let appsDir = windataIcons.appendingPathComponent("\(res)/apps", isDirectory: true)
+            if fm.fileExists(atPath: appsDir.path),
+               let files = try? fm.contentsOfDirectory(at: appsDir, includingPropertiesForKeys: nil) {
+                for file in files where file.pathExtension.lowercased() == "png" {
+                    let fLow = file.lastPathComponent.lowercased()
+                    if (lowName.contains("genshin") || lowExe.contains("genshin")) && (fLow.contains("hk4e") || fLow.contains("gameicon")) {
+                        return file
+                    }
+                    if (lowName.contains("hoyoplay") || lowExe.contains("launcher")) && fLow.contains("launcher") {
+                        return file
+                    }
+                    if fLow.contains(lowExe) || fLow.contains(lowName) {
+                        return file
+                    }
+                }
+            }
+        }
+
+        // 2. Check executable directory for .ico or .png
+        let exeDir = URL(fileURLWithPath: executable).deletingLastPathComponent()
+        let icoSearchDirs = [
+            exeDir,
+            exeDir.appendingPathComponent("ico"),
+            exeDir.deletingLastPathComponent().appendingPathComponent("ico")
+        ]
+        for sDir in icoSearchDirs where fm.fileExists(atPath: sDir.path) {
+            if let files = try? fm.contentsOfDirectory(at: sDir, includingPropertiesForKeys: nil) {
+                for file in files {
+                    let ext = file.pathExtension.lowercased()
+                    if ext == "ico" || ext == "png" {
+                        let fLow = file.lastPathComponent.lowercased()
+                        if (lowName.contains("genshin") && fLow.contains("hk4e")) ||
+                           (lowName.contains("hoyoplay") && fLow.contains("launcher")) ||
+                           fLow.contains(lowExe) {
+                            return file
+                        }
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Extracts Windows executable target from a .lnk binary payload.
+    private static func extractTargetFromLnk(at url: URL, driveC: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let str = String(data: data, encoding: .ascii) ?? String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let pattern = try? NSRegularExpression(pattern: "[A-Za-z]:\\\\[^\0\r\n\t<>\"]+?\\.exe", options: .caseInsensitive)
+        let range = NSRange(str.startIndex..<str.endIndex, in: str)
+        if let match = pattern?.firstMatch(in: str, options: [], range: range),
+           let matchRange = Range(match.range, in: str) {
+            let winPath = String(str[matchRange])
+            let relative = winPath.dropFirst(2)
+                .replacingOccurrences(of: "\\", with: "/")
+            let candidate = driveC.appendingPathComponent(String(relative)).standardized
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate.path
+            }
+        }
+        return nil
     }
 
     /// Terminates lingering `wineserver` background processes for a bottle prefix.
