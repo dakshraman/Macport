@@ -80,8 +80,26 @@ struct VMCreateView: View {
         }
     }
 
-    @State private var selectedOS: OSTemplate = .windows11
-    @State private var name: String = "Windows 11"
+    enum AssistantMode: String, CaseIterable, Identifiable {
+        case crossoverBottle = "Windows App / Bottle"
+        case hypervisorVM = "Virtual Machine"
+
+        var id: String { rawValue }
+    }
+
+    enum BottleInstallTarget: String, CaseIterable, Identifiable {
+        case newBottle = "New Bottle"
+        case existingBottle = "Existing Bottle"
+
+        var id: String { rawValue }
+    }
+
+    @State private var assistantMode: AssistantMode = .crossoverBottle
+    @State private var bottleTarget: BottleInstallTarget = .newBottle
+    @State private var selectedExistingBottleId: UUID? = nil
+    @State private var emptyBottleOnly: Bool = false
+    @State private var selectedOS: OSTemplate = .windowsApp
+    @State private var name: String = "New Bottle"
     @State private var installMediaPath: String?
 
     // MARK: - Step 2: Use Profile State
@@ -160,6 +178,25 @@ struct VMCreateView: View {
     }
 
     var body: some View {
+        Group {
+            if assistantMode == .crossoverBottle {
+                crossoverInstallView
+            } else {
+                hypervisorWizardView
+            }
+        }
+        .onAppear {
+            applyProfileDefaults()
+            existingCrossOverBottles = WineRuntime.existingCrossOverBottles()
+            if let firstBottle = store.machines.first(where: { $0.guest == .windowsApp }) {
+                selectedExistingBottleId = firstBottle.id
+            }
+        }
+    }
+
+    // MARK: - Hypervisor Wizard Container
+
+    private var hypervisorWizardView: some View {
         VStack(spacing: 0) {
             assistantHeader
             Divider()
@@ -186,9 +223,340 @@ struct VMCreateView: View {
         }
         .frame(width: 760, height: 620)
         .background(Color.macportWindow)
-        .onAppear {
-            applyProfileDefaults()
-            existingCrossOverBottles = WineRuntime.existingCrossOverBottles()
+    }
+
+    // MARK: - CrossOver-Style Bottle Install View
+
+    private var crossoverInstallView: some View {
+        VStack(spacing: 0) {
+            crossoverHeader
+            Divider().background(Color.crossoverBorder)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Card 1: Select Installer
+                    installerSelectionCard
+
+                    // Card 2: Bottle Environment Configuration
+                    bottleEnvironmentCard
+
+                    // Card 3: Graphics & Performance Settings
+                    graphicsSettingsCard
+                }
+                .padding(22)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider().background(Color.crossoverBorder)
+            crossoverFooter
+        }
+        .frame(width: 720, height: 620)
+        .background(Color.crossoverCanvas)
+    }
+
+    private var crossoverHeader: some View {
+        HStack(spacing: 14) {
+            MacportAppLogoView(size: 38)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Install Windows Application")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                Text("CrossOver-grade Apple Metal GPU acceleration via Wine & Apple GPTK")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.crossoverTextSecondary)
+            }
+
+            Spacer()
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    assistantMode = .hypervisorVM
+                    selectedOS = .windows11
+                    name = "Windows 11"
+                    currentStep = .osChoice
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 11))
+                    Text("Virtual Machine Wizard…")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(Color.crossoverBlue)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.crossoverCard))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.crossoverBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .background(Color.crossoverSidebar)
+    }
+
+    private var installerSelectionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("1. SELECT INSTALLER")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color(white: 0.5))
+                    .tracking(0.5)
+
+                Spacer()
+
+                Toggle("Create empty bottle only", isOn: $emptyBottleOnly)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.crossoverTextSecondary)
+                    .toggleStyle(.checkbox)
+            }
+
+            if !emptyBottleOnly {
+                installMediaDropZone
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
+    }
+
+    private var bottleEnvironmentCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("2. BOTTLE ENVIRONMENT")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color(white: 0.5))
+                .tracking(0.5)
+
+            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
+            if !existingBottles.isEmpty {
+                Picker("", selection: $bottleTarget) {
+                    Text("Create New Bottle").tag(BottleInstallTarget.newBottle)
+                    Text("Install into Existing Bottle").tag(BottleInstallTarget.existingBottle)
+                }
+                .pickerStyle(.segmented)
+                .padding(.bottom, 2)
+            }
+
+            if bottleTarget == .newBottle {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Bottle Name")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+
+                        TextField("e.g. Genshin Impact, Steam, Office", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+                    }
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Windows Bottle Template")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Text("DirectX 11/12 64-bit environment")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color(white: 0.5))
+                        }
+                        Spacer()
+                        Picker("", selection: $selectedBottleTemplate) {
+                            Text("Windows 11 64-bit (win11_64) — Recommended").tag("win11_64")
+                            Text("Windows 10 64-bit (win10_64)").tag("win10_64")
+                            Text("Windows 7 64-bit (win7_64)").tag("win7_64")
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Select Destination Bottle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+
+                    Picker("", selection: Binding(
+                        get: { selectedExistingBottleId ?? existingBottles.first?.id },
+                        set: { selectedExistingBottleId = $0 }
+                    )) {
+                        ForEach(existingBottles) { b in
+                            Text(b.name).tag(Optional(b.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
+    }
+
+    private var graphicsSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("3. GAMING & GRAPHICS ACCELERATION")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color(white: 0.5))
+                .tracking(0.5)
+
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Graphics Translation Backend")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("D3DMetal (Apple Game Porting Toolkit), DXMT, or DXVK")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                    Spacer()
+                    Picker("", selection: $selectedGraphicsBackend) {
+                        ForEach(GraphicsBackend.allCases) { b in
+                            Text(b.displayName).tag(b)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+
+                Divider().background(Color.white.opacity(0.06))
+
+                Toggle(isOn: $msyncEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MSync (High-Performance Mutex Synchronization)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Reduces thread contention and maximizes frame rates on Apple Silicon")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Color.crossoverBlue)
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+
+                Divider().background(Color.white.opacity(0.06))
+
+                Toggle(isOn: $metalFXEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple MetalFX AI Upscaling")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Translates DLSS calls to Apple MetalFX temporal / spatial upscaling")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Color.crossoverBlue)
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+
+                Divider().background(Color.white.opacity(0.06))
+
+                Toggle(isOn: $hudEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Metal Performance HUD")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Overlays real-time frame rates, frame times, and GPU metrics")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Color.crossoverBlue)
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+            }
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.crossoverSidebar))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
+    }
+
+    private var crossoverFooter: some View {
+        HStack {
+            Button("Cancel") {
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+
+            Spacer()
+
+            Button {
+                performCrossoverInstall()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: (installMediaPath != nil && !emptyBottleOnly) ? "arrow.down.circle.fill" : "plus.circle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(crossoverInstallButtonTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isCrossoverInstallDisabled ? Color(white: 0.25) : Color.crossoverBlue)
+                )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isCrossoverInstallDisabled)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .background(Color.crossoverSidebar)
+    }
+
+    private var crossoverInstallButtonTitle: String {
+        if bottleTarget == .existingBottle {
+            return "Install into Selected Bottle"
+        } else if installMediaPath != nil && !emptyBottleOnly {
+            return "Install Application"
+        } else {
+            return "Create Bottle"
+        }
+    }
+
+    private var isCrossoverInstallDisabled: Bool {
+        if bottleTarget == .newBottle {
+            return name.trimmingCharacters(in: .whitespaces).isEmpty
+        } else {
+            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
+            return existingBottles.isEmpty || (installMediaPath == nil && !emptyBottleOnly)
+        }
+    }
+
+    private func performCrossoverInstall() {
+        if bottleTarget == .existingBottle {
+            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
+            guard let targetBottle = existingBottles.first(where: { $0.id == (selectedExistingBottleId ?? existingBottles.first?.id) }) else { return }
+            if let media = installMediaPath {
+                let bundleURL = store.bundleURL(for: targetBottle)
+                Task {
+                    let engine = (state.instance(for: targetBottle.id)?.engine as? WineEngine) ?? WineEngine()
+                    try? await engine.launchExecutable(media, in: bundleURL, metal: true)
+                }
+            }
+            ui.selection = targetBottle.id
+            dismiss()
+        } else {
+            selectedOS = .windowsApp
+            let config = makeConfiguration()
+            if installMediaPath != nil && !emptyBottleOnly && onCreateAndStart != nil {
+                onCreateAndStart?(config)
+            } else {
+                onCreate(config)
+            }
+            dismiss()
         }
     }
 
@@ -900,6 +1268,17 @@ struct VMCreateView: View {
             }
             .keyboardShortcut(.cancelAction)
 
+            Button("◀ Windows App / Bottle") {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    assistantMode = .crossoverBottle
+                    selectedOS = .windowsApp
+                    name = "New Bottle"
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.crossoverBlue)
+            .padding(.leading, 8)
+
             Spacer()
 
             if currentStep > .osChoice {
@@ -1029,9 +1408,11 @@ struct VMCreateView: View {
     }
 
     private func makeConfiguration() -> VMConfiguration {
-        let boot: BootSource = installMediaPath.map { .installMedia(path: $0) } ?? .diskOnly
+        let isWindowsBottle = (assistantMode == .crossoverBottle || selectedOS == .windowsApp)
+        let guestKind: GuestKind = isWindowsBottle ? .windowsApp : selectedOS.guestKind
+        let boot: BootSource = (!emptyBottleOnly && installMediaPath != nil) ? .installMedia(path: installMediaPath!) : .diskOnly
         var wineSettings: WineBottleSettings? = nil
-        if selectedOS.guestKind == .windowsApp {
+        if guestKind == .windowsApp {
             wineSettings = WineBottleSettings(
                 backend: selectedGraphicsBackend,
                 msyncEnabled: msyncEnabled,
@@ -1041,16 +1422,17 @@ struct VMCreateView: View {
                 linkedCrossOverBottle: isLinkingExistingBottle && !selectedCrossOverBottle.isEmpty ? selectedCrossOverBottle : nil
             )
         }
+        let finalName = name.trimmingCharacters(in: .whitespaces).isEmpty ? (isWindowsBottle ? "New Bottle" : "Untitled VM") : name
         return VMConfiguration(
-            name: name,
-            guest: selectedOS.guestKind,
+            name: finalName,
+            guest: guestKind,
             cpuCount: cpuCount,
             memoryBytes: UInt64(memoryGB) * 1024 * 1024 * 1024,
             diskBytes: UInt64(diskGB) * 1024 * 1024 * 1024,
             network: network,
             sharedFolders: resolvedSharedFolders(),
             boot: boot,
-            tpmEnabled: selectedOS.guestKind.requiresTPM,
+            tpmEnabled: guestKind.requiresTPM,
             engineIdentifier: engineChoice == VMConfiguration.automaticEngine ? nil : engineChoice,
             wineSettings: wineSettings
         )
@@ -1067,13 +1449,16 @@ struct VMCreateView: View {
         panel.allowsOtherFileTypes = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = selectedOS == .windowsApp
+        let isWine = (assistantMode == .crossoverBottle || selectedOS == .windowsApp)
+        panel.message = isWine
             ? "Choose a Windows executable (.exe, .msi, or installer) to run"
             : (selectedOS == .macOS ? "Choose an IPSW restore image" : "Choose an ISO or disk image to boot")
         if panel.runModal() == .OK {
             installMediaPath = panel.url?.path
-            if selectedOS == .windowsApp, let filename = panel.url?.deletingPathExtension().lastPathComponent, name == "Windows App" || name.isEmpty {
-                name = filename
+            if isWine, let filename = panel.url?.deletingPathExtension().lastPathComponent {
+                if name == "Windows App" || name == "New Bottle" || name.isEmpty {
+                    name = filename
+                }
             }
         }
     }

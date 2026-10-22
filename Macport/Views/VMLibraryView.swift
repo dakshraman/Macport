@@ -44,11 +44,27 @@ struct VMLibraryView: View {
 
                     // Bottles Section
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("BOTTLES")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color(white: 0.5))
-                            .tracking(0.5)
-                            .padding(.horizontal, 12)
+                        HStack {
+                            Text("BOTTLES")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color(white: 0.5))
+                                .tracking(0.5)
+
+                            Spacer()
+
+                            Button {
+                                state.isPresentingCreateSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color(white: 0.6))
+                                    .frame(width: 18, height: 18)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("New Bottle…")
+                        }
+                        .padding(.horizontal, 12)
 
                         if bottleConfigs.isEmpty {
                             Text("No bottles created")
@@ -164,10 +180,18 @@ struct VMLibraryView: View {
             selection = config.id
         } label: {
             HStack(spacing: 8) {
-                // Active state dot
-                Circle()
-                    .fill(vmState.isActive ? Color.macportRunning : Color.clear)
-                    .frame(width: 6, height: 6)
+                // Active state dot / Bottle icon
+                if vmState.isActive {
+                    Circle()
+                        .fill(Color.macportRunning)
+                        .frame(width: 7, height: 7)
+                        .shadow(color: Color.macportRunning.opacity(0.8), radius: 3)
+                } else {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSelected ? Color.crossoverBlue : Color(white: 0.5))
+                        .frame(width: 14)
+                }
 
                 Text(config.name)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
@@ -181,9 +205,9 @@ struct VMLibraryView: View {
                     Text("RUNNING")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(Color.macportRunning)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.macportRunning.opacity(0.15)))
+                        .background(Capsule().fill(Color.macportRunning.opacity(0.18)))
                 } else if isHovered {
                     Menu {
                         Button("Run Application") {
@@ -193,7 +217,13 @@ struct VMLibraryView: View {
                             let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
                             NSWorkspace.shared.open(driveC)
                         }
+                        Button("Wine Configuration") {
+                            launchWinecfg(config)
+                        }
                         Divider()
+                        Button("Duplicate Bottle…") {
+                            ui.cloneTarget = config
+                        }
                         Button("Delete Bottle…", role: .destructive) {
                             ui.deleteTarget = config
                         }
@@ -234,11 +264,27 @@ struct VMLibraryView: View {
                 NSWorkspace.shared.open(driveC)
             }
 
+            Button("Wine Configuration (winecfg)") {
+                launchWinecfg(config)
+            }
+
             Divider()
+
+            Button("Duplicate Bottle…") {
+                ui.cloneTarget = config
+            }
 
             Button("Delete Bottle…", role: .destructive) {
                 ui.deleteTarget = config
             }
+        }
+    }
+
+    private func launchWinecfg(_ config: VMConfiguration) {
+        let bundleURL = store.bundleURL(for: config)
+        Task {
+            let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
+            try? await engine.launchExecutable("winecfg", in: bundleURL, metal: true)
         }
     }
 

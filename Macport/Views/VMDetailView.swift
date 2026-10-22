@@ -522,25 +522,66 @@ struct WineBottleDetailView: View {
     private var bottleHeader: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .bottom) {
-                Text(config.name)
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(config.name)
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(.white)
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 3) {
                     Text("Bottle Type: \(bottleTypeDisplayString)")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.crossoverTextSecondary)
+                }
 
-                    HStack(spacing: 5) {
-                        Text("Status:")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.crossoverTextSecondary)
+                Spacer()
+
+                HStack(spacing: 16) {
+                    // Inline shortcut search bar if bottle has multiple apps
+                    if installedShortcuts.count > 3 {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color(white: 0.5))
+
+                            TextField("Filter apps…", text: $appSearchQuery)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white)
+
+                            if !appSearchQuery.isEmpty {
+                                Button {
+                                    appSearchQuery = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color(white: 0.5))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.2)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                        .frame(width: 150)
+                    }
+
+                    // Bottle Status with Pulsing Green Indicator
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(vmState.isActive ? Color.macportRunning : Color(white: 0.4))
+                            .frame(width: 8, height: 8)
+                            .shadow(color: vmState.isActive ? Color.macportRunning.opacity(0.8) : Color.clear, radius: 4)
+
                         Text(vmState.isActive ? "Running" : "Ready")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(vmState.isActive ? Color.macportRunning : Color.crossoverTextSecondary)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(vmState.isActive ? Color.macportRunning.opacity(0.12) : Color.white.opacity(0.05))
+                    )
                 }
             }
 
@@ -564,13 +605,28 @@ struct WineBottleDetailView: View {
 
                 if installedShortcuts.isEmpty {
                     emptyApplicationsCard
+                } else if displayedShortcuts.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 28))
+                            .foregroundStyle(Color(white: 0.4))
+                        Text("No applications found matching '\(appSearchQuery)'")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white)
+                        Button("Clear Filter") {
+                            appSearchQuery = ""
+                        }
+                        .controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 50)
                 } else {
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 110, maximum: 130), spacing: 28)],
                         alignment: .leading,
                         spacing: 28
                     ) {
-                        ForEach(installedShortcuts) { shortcut in
+                        ForEach(displayedShortcuts) { shortcut in
                             appGridItem(shortcut)
                         }
                     }
@@ -876,9 +932,14 @@ struct WineBottleDetailView: View {
             VStack(spacing: 0) {
                 // Graphics Backend
                 HStack {
-                    Text("Graphics")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Graphics Backend")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("D3DMetal (GPTK), DXMT, or DXVK")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
                     Spacer()
                     Picker("", selection: Binding(
                         get: { wineSettings.backend },
@@ -901,9 +962,14 @@ struct WineBottleDetailView: View {
                     get: { wineSettings.metalFXEnabled },
                     set: { val in updateSettings { $0.metalFXEnabled = val } }
                 )) {
-                    Text("DLSS / MetalFX")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("DLSS / MetalFX")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Apple MetalFX AI Upscaling")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
                 }
                 .toggleStyle(.switch)
                 .tint(Color.crossoverBlue)
@@ -918,9 +984,14 @@ struct WineBottleDetailView: View {
                     get: { wineSettings.msyncEnabled },
                     set: { val in updateSettings { $0.msyncEnabled = val } }
                 )) {
-                    Text("MSync")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MSync")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Mach-port fast synchronization")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
                 }
                 .toggleStyle(.switch)
                 .tint(Color.crossoverBlue)
@@ -935,9 +1006,14 @@ struct WineBottleDetailView: View {
                     get: { wineSettings.retinaMode },
                     set: { val in updateSettings { $0.retinaMode = val } }
                 )) {
-                    Text("High Resolution Mode")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("High Resolution Mode")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Retina display HiDPI scaling")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
                 }
                 .toggleStyle(.switch)
                 .tint(Color.crossoverBlue)
@@ -952,9 +1028,14 @@ struct WineBottleDetailView: View {
                     get: { wineSettings.hudEnabled },
                     set: { val in updateSettings { $0.hudEnabled = val } }
                 )) {
-                    Text("Metal Performance HUD")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Metal Performance HUD")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                        Text("Real-time FPS & GPU telemetry")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
                 }
                 .toggleStyle(.switch)
                 .tint(Color.crossoverBlue)
@@ -995,6 +1076,10 @@ struct WineBottleDetailView: View {
                 Divider().background(Color.white.opacity(0.06))
                 controlPanelRow(title: "Task Manager", icon: "list.bullet.rectangle") {
                     executeCommandString("taskmgr")
+                }
+                Divider().background(Color.white.opacity(0.06))
+                controlPanelRow(title: "Command Prompt", icon: "terminal.fill") {
+                    executeCommandString("cmd.exe")
                 }
                 Divider().background(Color.white.opacity(0.06))
                 controlPanelRow(title: "Internet Settings", icon: "globe") {
@@ -1052,6 +1137,25 @@ struct WineBottleDetailView: View {
                 if let linked = wineSettings.linkedCrossOverBottle {
                     detailRow(label: "Linked Bottle", value: linked)
                 }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                Button {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: bundleURL.path)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                        Text("Show Bottle in Finder")
+                            .font(.system(size: 11, weight: .medium))
+                        Spacer()
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(Color.crossoverBlue)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
             }
             .padding(12)
             .background(
