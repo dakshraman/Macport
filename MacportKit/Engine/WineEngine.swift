@@ -130,7 +130,6 @@ public final class WineEngine: VMEngine {
             let fm = FileManager.default
 
             let process = Process()
-            process.executableURL = runtime.wineloader
 
             // Build complete CrossOver-grade gaming environment (D3DMetal, MSync, MetalFX, AVX)
             let env = buildEnvironment(
@@ -180,12 +179,30 @@ public final class WineEngine: VMEngine {
                 }
             }
 
-            process.arguments = targetArgs
+            if let wineBin = runtime.wine, runtime.cxbottle != nil {
+                process.executableURL = wineBin
+                let bottleName = bottleURL.resolvingSymlinksInPath().lastPathComponent
+                process.arguments = ["--bottle", bottleName] + targetArgs
+            } else {
+                process.executableURL = runtime.wineloader
+                process.arguments = targetArgs
+            }
+
             process.environment = env
 
-            let pipe = Pipe()
-            process.standardError = pipe
-            process.standardOutput = pipe
+            // Redirect output to machine log to avoid unread Pipe() buffer deadlock
+            let logURL = bundle.appendingPathComponent("wine.log")
+            if !fm.fileExists(atPath: logURL.path) {
+                fm.createFile(atPath: logURL.path, contents: nil)
+            }
+            if let logHandle = try? FileHandle(forWritingTo: logURL) {
+                logHandle.seekToEndOfFile()
+                process.standardOutput = logHandle
+                process.standardError = logHandle
+            } else {
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+            }
 
             process.terminationHandler = { [weak self] proc in
                 Task { @MainActor [weak self] in
@@ -255,8 +272,6 @@ public final class WineEngine: VMEngine {
         self.activeBottleURL = bottleURL
 
         let process = Process()
-        process.executableURL = runtime.wineloader
-
         var effectiveSettings = settings ?? WineBottleSettings()
         if !metal {
             effectiveSettings.backend = .wined3d
@@ -268,7 +283,17 @@ public final class WineEngine: VMEngine {
             runtime: runtime
         )
 
-        process.arguments = [executable] + arguments
+        let targetArgs = [executable] + arguments
+
+        if let wineBin = runtime.wine, runtime.cxbottle != nil {
+            process.executableURL = wineBin
+            let bottleName = bottleURL.resolvingSymlinksInPath().lastPathComponent
+            process.arguments = ["--bottle", bottleName] + targetArgs
+        } else {
+            process.executableURL = runtime.wineloader
+            process.arguments = targetArgs
+        }
+
         process.environment = env
 
         if executable.hasPrefix("/") {
@@ -283,9 +308,19 @@ public final class WineEngine: VMEngine {
             }
         }
 
-        let pipe = Pipe()
-        process.standardError = pipe
-        process.standardOutput = pipe
+        let fm = FileManager.default
+        let logURL = bundle.appendingPathComponent("wine.log")
+        if !fm.fileExists(atPath: logURL.path) {
+            fm.createFile(atPath: logURL.path, contents: nil)
+        }
+        if let logHandle = try? FileHandle(forWritingTo: logURL) {
+            logHandle.seekToEndOfFile()
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+        } else {
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+        }
 
         process.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -313,6 +348,7 @@ public final class WineEngine: VMEngine {
 
         // 1. Core Bottle Paths & Logging
         env["WINEPREFIX"] = bottleURL.path
+        env["CX_ROOT"] = runtime.root.path
         env["CX_BOTTLE"] = bottleURL.resolvingSymlinksInPath().lastPathComponent
         env["WINEDEBUG"] = "-all"
         env["DISPLAY"] = ":0"

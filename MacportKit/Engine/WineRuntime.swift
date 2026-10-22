@@ -22,6 +22,7 @@ public enum WineRuntime: Sendable {
         public let d3dsharedPath: URL?
         public let d3dmetalFrameworkPath: URL?
         public let cxbottle: URL?
+        public let wine: URL?
 
         public init(
             root: URL,
@@ -35,7 +36,8 @@ public enum WineRuntime: Sendable {
             hasDXVK: Bool = false,
             d3dsharedPath: URL? = nil,
             d3dmetalFrameworkPath: URL? = nil,
-            cxbottle: URL? = nil
+            cxbottle: URL? = nil,
+            wine: URL? = nil
         ) {
             self.root = root
             self.wineloader = wineloader
@@ -49,6 +51,7 @@ public enum WineRuntime: Sendable {
             self.d3dsharedPath = d3dsharedPath
             self.d3dmetalFrameworkPath = d3dmetalFrameworkPath
             self.cxbottle = cxbottle
+            self.wine = wine
         }
     }
 
@@ -226,6 +229,19 @@ public enum WineRuntime: Sendable {
             }
         }
 
+        var wineURL: URL?
+        let candidateWines = [
+            directory.appendingPathComponent("bin/wine"),
+            directory.appendingPathComponent("bin/wine64"),
+            directory.appendingPathComponent("CrossOver-Hosted Application/wine")
+        ]
+        for candidate in candidateWines {
+            if fm.isExecutableFile(atPath: candidate.path) {
+                wineURL = candidate
+                break
+            }
+        }
+
         return Locations(
             root: directory,
             wineloader: wineloader,
@@ -238,7 +254,8 @@ public enum WineRuntime: Sendable {
             hasDXVK: hasDXVK,
             d3dsharedPath: d3dshared,
             d3dmetalFrameworkPath: d3dmetalFwk,
-            cxbottle: cxbottleURL
+            cxbottle: cxbottleURL,
+            wine: wineURL
         )
     }
 
