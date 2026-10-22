@@ -19,6 +19,8 @@ struct VMDetailView: View {
     private var capabilities: EngineCapabilities { state.capabilities(for: config) }
     private var host: HostCapacity { state.registry.capacity }
 
+    @State private var showTechnicalDetails = false
+
     var body: some View {
         VStack(spacing: 0) {
             if config.guest != .windowsApp {
@@ -43,45 +45,217 @@ struct VMDetailView: View {
             EmbeddedVNCDisplayView(socketPath: vncPath, showOverlayBar: false)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 340), spacing: 16, alignment: .top)],
-                    alignment: .leading,
-                    spacing: 16
-                ) {
-                    if vmState.isActive, state.runsInExternalWindow(for: config.id) {
-                        externalWindowCard
+            hypervisorVMOverview
+        }
+    }
+
+    // MARK: - Modern Uncluttered Hypervisor VM Overview
+
+    private var hypervisorVMOverview: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                if let error = state.lastError(for: config.id) {
+                    ProblemCard(
+                        title: "This machine stopped with an error",
+                        message: error,
+                        fix: "Open the machine's settings or log, correct the cause, then start it again."
+                    )
+                }
+
+                if config.guest == .windowsARM, MacportTools.resolve() == nil {
+                    ProblemCard(
+                        title: "Windows driver media is missing",
+                        message: "Windows Setup does not include the Arm64 virtio drivers "
+                            + "for Macport's network device and accelerated display. Macport "
+                            + "builds a Tools disc from a virtio-win ISO, and none is available yet.",
+                        detail: "Looked for \(MacportTools.cachedISOURL.path)\n"
+                            + "or \(MacportTools.environmentOverride) in the environment.",
+                        fix: "Place the virtio-win \(MacportTools.version) ISO at that path, "
+                            + "or point \(MacportTools.environmentOverride) at a copy, then "
+                            + "start the machine again. Macport does not redistribute it."
+                    )
+                }
+
+                // MARK: - Hero VM Console Card (Clean & Modern)
+                VStack(spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.crossoverCard, Color.crossoverSidebar],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                            )
+                            .frame(height: 220)
+
+                        VStack(spacing: 14) {
+                            GuestAvatar(guest: config.guest, size: 54)
+                                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+
+                            VStack(spacing: 4) {
+                                Text(config.name)
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundStyle(.white)
+
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(vmState.isActive ? Color.macportRunning : Color(white: 0.45))
+                                        .frame(width: 7, height: 7)
+                                    Text(vmState.isActive ? "Running" : "Powered Off")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color.crossoverTextSecondary)
+                                }
+                            }
+
+                            Button {
+                                if vmState.isActive {
+                                    Task { await state.stop(id: config.id, graceful: true) }
+                                } else {
+                                    state.start(config, in: store)
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: vmState.isActive ? "stop.fill" : "play.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text(vmState.isActive ? "Shut Down" : "Start Virtual Machine")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(vmState.isActive ? Color.crossoverDangerBg : Color.crossoverBlue))
+                                .overlay(Capsule().stroke(vmState.isActive ? Color.crossoverDangerText.opacity(0.4) : Color.white.opacity(0.2), lineWidth: 1))
+                                .shadow(color: (vmState.isActive ? Color.crossoverDangerText : Color.crossoverBlue).opacity(0.3), radius: 6, y: 2)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    if let error = state.lastError(for: config.id) {
-                        ProblemCard(
-                            title: "This machine stopped with an error",
-                            message: error,
-                            fix: "Open the machine's settings or log, correct the cause, then start it again."
-                        )
+
+                    // MARK: - Hardware Specs Strip
+                    HStack(spacing: 10) {
+                        specPill(icon: "cpu", label: "\(config.cpuCount) vCPUs")
+                        specPill(icon: "memorychip", label: "\(config.memoryBytes.gbString) RAM")
+                        specPill(icon: "internaldrive", label: "\(config.diskBytes.gbString) NVMe")
+                        specPill(icon: "network", label: config.network.rawValue.capitalized)
+                        specPill(icon: "bolt.fill", label: engineType.displayName)
                     }
-                    if config.guest == .windowsARM, MacportTools.resolve() == nil {
-                        ProblemCard(
-                            title: "Windows driver media is missing",
-                            message: "Windows Setup does not include the Arm64 virtio drivers "
-                                + "for Macport's network device and accelerated display. Macport "
-                                + "builds a Tools disc from a virtio-win ISO, and none is available yet.",
-                            detail: "Looked for \(MacportTools.cachedISOURL.path)\n"
-                                + "or \(MacportTools.environmentOverride) in the environment.",
-                            fix: "Place the virtio-win \(MacportTools.version) ISO at that path, "
-                                + "or point \(MacportTools.environmentOverride) at a copy, then "
-                                + "start the machine again. Macport does not redistribute it."
-                        )
+
+                    // MARK: - Quick Action Controls
+                    HStack(spacing: 10) {
+                        actionCardButton(title: "Hardware Settings…", icon: "slider.horizontal.3") {
+                            ui.isPresentingSettings = true
+                        }
+                        actionCardButton(title: "Snapshots…", icon: "camera.badge.clock") {
+                            ui.isPresentingSnapshots = true
+                        }
+                        actionCardButton(title: "Show in Finder", icon: "folder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([store.bundleURL(for: config)])
+                        }
+                        actionCardButton(title: "Clone Machine…", icon: "doc.on.doc") {
+                            ui.cloneTarget = config
+                        }
                     }
-                    capacityCard
-                    capabilityCard
-                    storageCard
-                    bootCard
-                    if needsRuntimeInstall { runtimeCard }
                 }
                 .padding(20)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.crossoverCanvas)
+                )
+
+                // MARK: - Collapsed Diagnostics & Telemetry (No Clutter by default)
+                DisclosureGroup(
+                    isExpanded: $showTechnicalDetails,
+                    content: {
+                        VStack(spacing: 16) {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 340), spacing: 16, alignment: .top)],
+                                alignment: .leading,
+                                spacing: 16
+                            ) {
+                                capacityCard
+                                capabilityCard
+                                storageCard
+                                bootCard
+                                if needsRuntimeInstall { runtimeCard }
+                            }
+                        }
+                        .padding(.top, 14)
+                    },
+                    label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "gauge.with.needle")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.crossoverBlue)
+                            Text("Advanced Hardware Telemetry & Engine Diagnostics")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Spacer()
+                        }
+                    }
+                )
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.crossoverCard)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.crossoverBorder, lineWidth: 1)
+                )
             }
+            .padding(24)
         }
+        .background(Color.crossoverCanvas)
+    }
+
+    private func specPill(icon: String, label: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundStyle(Color.crossoverBlue)
+            Text(label)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.crossoverCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.crossoverBorder, lineWidth: 1)
+        )
+    }
+
+    private func actionCardButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.crossoverButton)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.crossoverBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var externalWindowCard: some View {
@@ -741,6 +915,20 @@ struct WineBottleDetailView: View {
                 setAsPrimaryExecutable(shortcut)
             } label: {
                 Label("Set as Primary Executable", systemImage: "star")
+            }
+
+            Divider()
+
+            Button {
+                exportShortcut(shortcut, to: .applications)
+            } label: {
+                Label("Add to Applications", systemImage: "app.badge.checkmark")
+            }
+
+            Button {
+                exportShortcut(shortcut, to: .desktop)
+            } label: {
+                Label("Add to Desktop", systemImage: "desktopcomputer")
             }
 
             Divider()
