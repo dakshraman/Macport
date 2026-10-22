@@ -99,6 +99,50 @@ public struct SharedFolder: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Wine & Graphics Settings
+
+public enum GraphicsBackend: String, Codable, CaseIterable, Identifiable, Sendable {
+    case auto
+    case d3dmetal
+    case dxmt
+    case dxvk
+    case wined3d
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .auto: return "Auto (Recommended)"
+        case .d3dmetal: return "D3DMetal (Apple GPTK)"
+        case .dxmt: return "DXMT (Direct3D 11 to Metal)"
+        case .dxvk: return "DXVK (Direct3D to Vulkan)"
+        case .wined3d: return "WineD3D (OpenGL Fallback)"
+        }
+    }
+}
+
+public struct WineBottleSettings: Codable, Hashable, Sendable {
+    public var backend: GraphicsBackend
+    public var msyncEnabled: Bool
+    public var metalFXEnabled: Bool
+    public var hudEnabled: Bool
+    public var retinaMode: Bool
+
+    public init(
+        backend: GraphicsBackend = .auto,
+        msyncEnabled: Bool = true,
+        metalFXEnabled: Bool = true,
+        hudEnabled: Bool = false,
+        retinaMode: Bool = false
+    ) {
+        self.backend = backend
+        self.msyncEnabled = msyncEnabled
+        self.metalFXEnabled = metalFXEnabled
+        self.hudEnabled = hudEnabled
+        self.retinaMode = retinaMode
+    }
+}
+
 // MARK: - Configuration
 
 /// Serializable definition of one virtual machine.
@@ -138,6 +182,9 @@ public struct VMConfiguration: Codable, Hashable, Identifiable, Sendable {
     /// Engine that owns this VM. `nil` means "pick the best available".
     public var engineIdentifier: String?
 
+    /// Wine translation bottle settings (active for `windowsApp` guests).
+    public var wineSettings: WineBottleSettings?
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -149,7 +196,8 @@ public struct VMConfiguration: Codable, Hashable, Identifiable, Sendable {
         sharedFolders: [SharedFolder] = [],
         boot: BootSource = .diskOnly,
         tpmEnabled: Bool = false,
-        engineIdentifier: String? = nil
+        engineIdentifier: String? = nil,
+        wineSettings: WineBottleSettings? = nil
     ) {
         self.id = id
         self.name = name
@@ -162,6 +210,7 @@ public struct VMConfiguration: Codable, Hashable, Identifiable, Sendable {
         self.boot = boot
         self.tpmEnabled = tpmEnabled
         self.engineIdentifier = engineIdentifier
+        self.wineSettings = wineSettings ?? (guest == .windowsApp ? WineBottleSettings() : nil)
     }
 }
 

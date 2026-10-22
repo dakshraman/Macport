@@ -16,6 +16,11 @@ public enum WineRuntime: Sendable {
         public let wineboot: URL?
         public let libDirectory: URL
         public let hasMetalAcceleration: Bool
+        public let hasD3DMetal: Bool
+        public let hasDXMT: Bool
+        public let hasDXVK: Bool
+        public let d3dsharedPath: URL?
+        public let d3dmetalFrameworkPath: URL?
 
         public init(
             root: URL,
@@ -23,7 +28,12 @@ public enum WineRuntime: Sendable {
             wineserver: URL,
             wineboot: URL? = nil,
             libDirectory: URL,
-            hasMetalAcceleration: Bool = false
+            hasMetalAcceleration: Bool = false,
+            hasD3DMetal: Bool = false,
+            hasDXMT: Bool = false,
+            hasDXVK: Bool = false,
+            d3dsharedPath: URL? = nil,
+            d3dmetalFrameworkPath: URL? = nil
         ) {
             self.root = root
             self.wineloader = wineloader
@@ -31,6 +41,11 @@ public enum WineRuntime: Sendable {
             self.wineboot = wineboot
             self.libDirectory = libDirectory
             self.hasMetalAcceleration = hasMetalAcceleration
+            self.hasD3DMetal = hasD3DMetal
+            self.hasDXMT = hasDXMT
+            self.hasDXVK = hasDXVK
+            self.d3dsharedPath = d3dsharedPath
+            self.d3dmetalFrameworkPath = d3dmetalFrameworkPath
         }
     }
 
@@ -156,9 +171,44 @@ public enum WineRuntime: Sendable {
 
         let libDir = directory.appendingPathComponent("lib", isDirectory: true)
 
-        // Check for DXMT / winemetal.so or D3DMetal acceleration
+        // Check for DXMT / winemetal.so acceleration
         let dxmtDir = directory.appendingPathComponent("lib/dxmt", isDirectory: true)
         let hasDXMT = fm.fileExists(atPath: dxmtDir.path)
+
+        // Check for DXVK (Direct3D to Vulkan via MoltenVK)
+        let dxvkDir = directory.appendingPathComponent("lib/dxvk", isDirectory: true)
+        let hasDXVK = fm.fileExists(atPath: dxvkDir.path)
+
+        // Check for Apple GPTK / D3DMetal acceleration
+        var d3dshared: URL?
+        var d3dmetalFwk: URL?
+
+        let candidateD3DShared = [
+            directory.appendingPathComponent("lib64/apple_gptk/external/libd3dshared.dylib"),
+            directory.appendingPathComponent("lib/apple_gptk/external/libd3dshared.dylib"),
+            directory.appendingPathComponent("lib/libd3dshared.dylib")
+        ]
+        for candidate in candidateD3DShared {
+            if fm.fileExists(atPath: candidate.path) {
+                d3dshared = candidate
+                break
+            }
+        }
+
+        let candidateD3DFwks = [
+            directory.appendingPathComponent("lib64/apple_gptk/external/D3DMetal.framework", isDirectory: true),
+            directory.appendingPathComponent("lib/apple_gptk/external/D3DMetal.framework", isDirectory: true),
+            directory.appendingPathComponent("Frameworks/D3DMetal.framework", isDirectory: true)
+        ]
+        for candidate in candidateD3DFwks {
+            if fm.fileExists(atPath: candidate.path) {
+                d3dmetalFwk = candidate
+                break
+            }
+        }
+
+        let hasD3DMetal = d3dmetalFwk != nil
+        let hasMetalAcceleration = hasD3DMetal || hasDXMT
 
         return Locations(
             root: directory,
@@ -166,7 +216,12 @@ public enum WineRuntime: Sendable {
             wineserver: wineserver,
             wineboot: bootURL,
             libDirectory: libDir,
-            hasMetalAcceleration: hasDXMT
+            hasMetalAcceleration: hasMetalAcceleration,
+            hasD3DMetal: hasD3DMetal,
+            hasDXMT: hasDXMT,
+            hasDXVK: hasDXVK,
+            d3dsharedPath: d3dshared,
+            d3dmetalFrameworkPath: d3dmetalFwk
         )
     }
 

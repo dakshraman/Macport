@@ -161,4 +161,68 @@ final class WineEngineTests: XCTestCase {
         let shortcuts = WineBottleManager.scanInstalledShortcuts(in: tempDir)
         XCTAssertTrue(shortcuts.contains(where: { $0.name == "steam" }))
     }
+
+    func testWineBottleSettingsDefaultsAndSerialization() throws {
+        let settings = WineBottleSettings()
+        XCTAssertEqual(settings.backend, .auto)
+        XCTAssertTrue(settings.msyncEnabled)
+        XCTAssertTrue(settings.metalFXEnabled)
+        XCTAssertFalse(settings.hudEnabled)
+        XCTAssertFalse(settings.retinaMode)
+
+        let config = VMConfiguration(
+            name: "GenshinImpact",
+            guest: .windowsApp,
+            wineSettings: settings
+        )
+        XCTAssertNotNil(config.wineSettings)
+        XCTAssertEqual(config.wineSettings?.backend, .auto)
+        XCTAssertTrue(config.wineSettings?.msyncEnabled == true)
+
+        let encoded = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(VMConfiguration.self, from: encoded)
+        XCTAssertEqual(decoded.wineSettings?.backend, .auto)
+        XCTAssertEqual(decoded.wineSettings?.msyncEnabled, true)
+        XCTAssertEqual(decoded.wineSettings?.metalFXEnabled, true)
+    }
+
+    func testGraphicsBackendDisplayNames() {
+        XCTAssertEqual(GraphicsBackend.auto.displayName, "Auto (Recommended)")
+        XCTAssertEqual(GraphicsBackend.d3dmetal.displayName, "D3DMetal (Apple GPTK)")
+        XCTAssertEqual(GraphicsBackend.dxmt.displayName, "DXMT (Direct3D 11 to Metal)")
+        XCTAssertEqual(GraphicsBackend.dxvk.displayName, "DXVK (Direct3D to Vulkan)")
+        XCTAssertEqual(GraphicsBackend.wined3d.displayName, "WineD3D (OpenGL Fallback)")
+    }
+
+    func testWineRuntimeD3DMetalDetection() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let binDir = tempDir.appendingPathComponent("bin")
+        let gptkDir = tempDir.appendingPathComponent("lib64/apple_gptk/external")
+        let d3dmetalFwk = gptkDir.appendingPathComponent("D3DMetal.framework")
+        try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: d3dmetalFwk, withIntermediateDirectories: true)
+
+        let loader = binDir.appendingPathComponent("wineloader")
+        let server = binDir.appendingPathComponent("wineserver")
+        let shared = gptkDir.appendingPathComponent("libd3dshared.dylib")
+        try "#!/bin/sh\nexit 0".write(to: loader, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\nexit 0".write(to: server, atomically: true, encoding: .utf8)
+        try "fake lib".write(to: shared, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: loader.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path)
+
+        let result = WineRuntime.resolve(environment: ["MACPORT_WINE_DIR": tempDir.path])
+        switch result {
+        case .success(let loc):
+            XCTAssertTrue(loc.hasD3DMetal)
+            XCTAssertTrue(loc.hasMetalAcceleration)
+            XCTAssertNotNil(loc.d3dsharedPath)
+            XCTAssertNotNil(loc.d3dmetalFrameworkPath)
+        case .failure(let err):
+            XCTFail("Expected success but got \(err)")
+        }
+    }
 }

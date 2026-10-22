@@ -123,23 +123,12 @@ public final class WineEngine: VMEngine {
             let process = Process()
             process.executableURL = runtime.wineloader
 
-            // Build environment for native Mac windowing & Metal graphics
-            var env = ProcessInfo.processInfo.environment
-            env["WINEPREFIX"] = bottleURL.path
-            env["WINEDEBUG"] = "-all"
-            env["DISPLAY"] = ":0"
-            env["WINEDLLPATH"] = runtime.libDirectory.appendingPathComponent("wine").path
-            env["ROSETTA_ADVERTISE_AVX"] = "1"
-
-            var fallbackLibs = runtime.libDirectory.path
-            if runtime.hasMetalAcceleration {
-                // Direct DXMT / winemetal.so acceleration
-                env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core=n,b"
-                let dxmtDir = runtime.root.appendingPathComponent("lib/dxmt/x86_64-unix").path
-                fallbackLibs = dxmtDir + ":" + fallbackLibs
-            }
-            let currentDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
-            env["DYLD_FALLBACK_LIBRARY_PATH"] = currentDyld.isEmpty ? fallbackLibs : fallbackLibs + ":" + currentDyld
+            // Build complete CrossOver-grade gaming environment (D3DMetal, MSync, MetalFX, AVX)
+            let env = buildEnvironment(
+                settings: config.wineSettings ?? WineBottleSettings(),
+                bottleURL: bottleURL,
+                runtime: runtime
+            )
 
             // Determine target executable to run
             let targetArgs: [String]
@@ -219,7 +208,8 @@ public final class WineEngine: VMEngine {
         _ executable: String,
         arguments: [String] = [],
         in bundle: URL,
-        metal: Bool = true
+        metal: Bool = true,
+        settings: WineBottleSettings? = nil
     ) async throws {
         let runtime = try resolveRuntime()
         self.runtimeLocations = runtime
@@ -230,21 +220,16 @@ public final class WineEngine: VMEngine {
         let process = Process()
         process.executableURL = runtime.wineloader
 
-        var env = ProcessInfo.processInfo.environment
-        env["WINEPREFIX"] = bottleURL.path
-        env["WINEDEBUG"] = "-all"
-        env["DISPLAY"] = ":0"
-        env["WINEDLLPATH"] = runtime.libDirectory.appendingPathComponent("wine").path
-        env["ROSETTA_ADVERTISE_AVX"] = "1"
-
-        var fallbackLibs = runtime.libDirectory.path
-        if runtime.hasMetalAcceleration && metal {
-            env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core=n,b"
-            let dxmtDir = runtime.root.appendingPathComponent("lib/dxmt/x86_64-unix").path
-            fallbackLibs = dxmtDir + ":" + fallbackLibs
+        var effectiveSettings = settings ?? WineBottleSettings()
+        if !metal {
+            effectiveSettings.backend = .wined3d
         }
-        let currentDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
-        env["DYLD_FALLBACK_LIBRARY_PATH"] = currentDyld.isEmpty ? fallbackLibs : fallbackLibs + ":" + currentDyld
+
+        let env = buildEnvironment(
+            settings: effectiveSettings,
+            bottleURL: bottleURL,
+            runtime: runtime
+        )
 
         process.arguments = [executable] + arguments
         process.environment = env
@@ -256,6 +241,119 @@ public final class WineEngine: VMEngine {
         try process.run()
         self.activeProcess = process
         self.state = .running
+    }
+
+    // MARK: - Environment & Graphics Pipeline Construction
+
+    nonisolated private func buildEnvironment(
+        settings: WineBottleSettings,
+        bottleURL: URL,
+        runtime: WineRuntime.Locations
+    ) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+
+        // 1. Core Bottle Paths & Logging
+        env["WINEPREFIX"] = bottleURL.path
+        env["WINEDEBUG"] = "-all"
+        env["DISPLAY"] = ":0"
+
+        // 2. Performance & Game Launch Optimizations
+        if settings.msyncEnabled {
+            env["WINEMSYNC"] = "1"
+        } else {
+            env["WINEMSYNC"] = "0"
+        }
+        env["ROSETTA_ADVERTISE_AVX"] = "1"
+        env["DOTNET_EnableWriteXorExecute"] = "0"
+        env["WINE_WAIT_CHILD_PIPE_IGNORE"] = "launcher.exe"
+
+        if settings.hudEnabled {
+            env["MTL_HUD_ENABLED"] = "1"
+            env["WINE_D3DMETAL_PERF_OVERLAY"] = "1"
+        }
+
+        if settings.metalFXEnabled {
+            env["D3DM_ENABLE_METALFX"] = "1"
+            env["DXMT_ENABLE_NVEXT"] = "1"
+        }
+
+        if settings.retinaMode {
+            env["WINE_MAC_HIGH_RES"] = "1"
+        }
+
+        // 3. Dynamic WINEDLLPATH Setup
+        var dllPaths: [String] = []
+        let x86Windows = runtime.root.appendingPathComponent("lib/wine/x86_64-windows")
+        let i386Windows = runtime.root.appendingPathComponent("lib/wine/i386-windows")
+        let wineUnix = runtime.libDirectory.appendingPathComponent("wine")
+
+        if FileManager.default.fileExists(atPath: x86Windows.path) {
+            dllPaths.append(x86Windows.path)
+        }
+        if FileManager.default.fileExists(atPath: i386Windows.path) {
+            dllPaths.append(i386Windows.path)
+        }
+        dllPaths.append(wineUnix.path)
+        env["WINEDLLPATH"] = dllPaths.joined(separator: ":")
+
+        // 4. Graphics Backend & Dynamic Library Fallback Path
+        var fallbackPaths: [String] = []
+        let lib64 = runtime.root.appendingPathComponent("lib64")
+        if FileManager.default.fileExists(atPath: lib64.path) {
+            fallbackPaths.append(lib64.path)
+        }
+        fallbackPaths.append(runtime.libDirectory.path)
+
+        // Resolve backend selection
+        let effectiveBackend: GraphicsBackend
+        if settings.backend == .auto {
+            if runtime.hasD3DMetal {
+                effectiveBackend = .d3dmetal
+            } else if runtime.hasDXMT {
+                effectiveBackend = .dxmt
+            } else if runtime.hasDXVK {
+                effectiveBackend = .dxvk
+            } else {
+                effectiveBackend = .wined3d
+            }
+        } else {
+            effectiveBackend = settings.backend
+        }
+
+        switch effectiveBackend {
+        case .d3dmetal:
+            env["CX_GRAPHICS_BACKEND"] = "d3dmetal"
+            env["WINED3DMETAL"] = "1"
+            env["WINEDLLOVERRIDES"] = "d3d11,d3d12,dxgi=n,b"
+            if let d3dshared = runtime.d3dsharedPath {
+                env["CX_APPLEGPTK_LIBD3DSHARED_PATH"] = d3dshared.path
+            }
+            if let fwk = runtime.d3dmetalFrameworkPath {
+                fallbackPaths.insert(fwk.deletingLastPathComponent().path, at: 0)
+            }
+        case .dxmt:
+            env["CX_GRAPHICS_BACKEND"] = "dxmt"
+            env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core=n,b"
+            let dxmtDir = runtime.root.appendingPathComponent("lib/dxmt/x86_64-unix").path
+            fallbackPaths.insert(dxmtDir, at: 0)
+        case .dxvk:
+            env["CX_GRAPHICS_BACKEND"] = "dxvk"
+            env["WINEDLLOVERRIDES"] = "d3d11,d3d10core,d3d9,dxgi=n,b"
+            let dxvkDir = runtime.root.appendingPathComponent("lib/dxvk").path
+            fallbackPaths.insert(dxvkDir, at: 0)
+        case .wined3d:
+            env["CX_GRAPHICS_BACKEND"] = "wined3d"
+        case .auto:
+            break
+        }
+
+        let existingDyld = env["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
+        let combinedFallback = fallbackPaths.joined(separator: ":")
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = existingDyld.isEmpty
+            ? combinedFallback
+            : combinedFallback + ":" + existingDyld
+
+        return env
     }
 
     // MARK: - Private Helpers
