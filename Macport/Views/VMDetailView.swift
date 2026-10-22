@@ -20,6 +20,7 @@ struct VMDetailView: View {
     private var host: HostCapacity { state.registry.capacity }
 
     @State private var showTechnicalDetails = false
+    @State private var vmStatusMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,6 +75,26 @@ struct VMDetailView: View {
                             + "or point \(MacportTools.environmentOverride) at a copy, then "
                             + "start the machine again. Macport does not redistribute it."
                     )
+                }
+
+                if let message = vmStatusMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.macportRunning)
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Button(action: { vmStatusMessage = nil }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.crossoverCard))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportRunning.opacity(0.3), lineWidth: 1))
                 }
 
                 // MARK: - Hero VM Console Card (Clean & Modern)
