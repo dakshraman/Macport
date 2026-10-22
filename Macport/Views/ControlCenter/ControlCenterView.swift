@@ -188,12 +188,7 @@ struct ControlCenterView: View {
 
     private var emptyGalleryState: some View {
         VStack(spacing: 20) {
-            Image("AppLogo")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 88, height: 88)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+            MacportAppLogoView(size: 88)
 
             VStack(spacing: 6) {
                 Text("Parallels-Class Control Center")
