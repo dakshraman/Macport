@@ -110,4 +110,55 @@ final class WineEngineTests: XCTestCase {
             // Success
         }
     }
+
+    func testWineBottleManagerBuiltInTools() {
+        let tools = WineBottleManager.builtInTools
+        XCTAssertEqual(tools.count, 6)
+        XCTAssertTrue(tools.contains(where: { $0.executable == "winecfg" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "regedit" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "taskmgr" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "cmd.exe" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "explorer.exe" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "control.exe" }))
+    }
+
+    func testWineBottleManagerPathsAndInitialization() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bottleURL = WineBottleManager.bottleURL(for: tempDir)
+        let driveCURL = WineBottleManager.driveCURL(for: tempDir)
+
+        XCTAssertEqual(bottleURL.path, tempDir.appendingPathComponent("bottle").path)
+        XCTAssertEqual(driveCURL.path, tempDir.appendingPathComponent("bottle/drive_c").path)
+        XCTAssertFalse(WineBottleManager.isBottleInitialized(in: tempDir))
+
+        // Create fake drive_c
+        try FileManager.default.createDirectory(at: driveCURL, withIntermediateDirectories: true)
+        XCTAssertTrue(WineBottleManager.isBottleInitialized(in: tempDir))
+
+        // Write a test file in drive_c and verify calculateBottleSize
+        let testFile = driveCURL.appendingPathComponent("test.dat")
+        let data = Data(repeating: 0x42, count: 2048)
+        try data.write(to: testFile)
+
+        let size = WineBottleManager.calculateBottleSize(in: tempDir)
+        XCTAssertGreaterThanOrEqual(size, 2048)
+    }
+
+    func testWineBottleManagerShortcutScanning() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let programFiles = WineBottleManager.driveCURL(for: tempDir).appendingPathComponent("Program Files/Steam")
+        try FileManager.default.createDirectory(at: programFiles, withIntermediateDirectories: true)
+
+        let fakeSteam = programFiles.appendingPathComponent("steam.exe")
+        try "fake binary".write(to: fakeSteam, atomically: true, encoding: .utf8)
+
+        let shortcuts = WineBottleManager.scanInstalledShortcuts(in: tempDir)
+        XCTAssertTrue(shortcuts.contains(where: { $0.name == "steam" }))
+    }
 }
