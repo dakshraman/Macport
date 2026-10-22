@@ -118,16 +118,7 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Image("AppLogo")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 96, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .shadow(color: Color.black.opacity(0.35), radius: 12, y: 6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+            MacportAppLogoView(size: 96)
                 .accessibilityLabel("Macport App Logo")
 
             VStack(spacing: 6) {
