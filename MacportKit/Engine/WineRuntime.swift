@@ -831,9 +831,7 @@ public enum MacportAppPublisher: Sendable {
         public var directoryURL: URL {
             switch self {
             case .applications:
-                let homeApps = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true)
-                let macportApps = homeApps.appendingPathComponent("Macport", isDirectory: true)
-                return macportApps
+                return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true)
             case .desktop:
                 return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Desktop", isDirectory: true)
             case .custom(let url):
@@ -937,6 +935,81 @@ public enum MacportAppPublisher: Sendable {
         return appBundleURL
     }
 
+    /// Exports a native macOS `.app` launcher bundle for a Virtual Machine.
+    @discardableResult
+    public static func exportVMLauncherApp(
+        vmId: UUID,
+        vmName: String,
+        guest: GuestOS,
+        to destination: Destination = .applications
+    ) throws -> URL {
+        let fm = FileManager.default
+        let destDir = destination.directoryURL
+        try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        let safeName = vmName.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let appBundleURL = destDir.appendingPathComponent("\(safeName).app", isDirectory: true)
+
+        if fm.fileExists(atPath: appBundleURL.path) {
+            try? fm.removeItem(at: appBundleURL)
+        }
+
+        let contentsURL = appBundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let macosURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+        let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+
+        try fm.createDirectory(at: macosURL, withIntermediateDirectories: true)
+        try fm.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+
+        // 1. Info.plist
+        let alphanumericId = safeName.filter { $0.isLetter || $0.isNumber }
+        let bundleID = "com.dakshraman.macport.launcher.vm.\(vmId.uuidString.lowercased()).\(alphanumericId.isEmpty ? "vm" : alphanumericId)"
+        let plistDict: [String: Any] = [
+            "CFBundleDevelopmentRegion": "en",
+            "CFBundleExecutable": "launch",
+            "CFBundleIconFile": "AppIcon",
+            "CFBundleIdentifier": bundleID,
+            "CFBundleInfoDictionaryVersion": "6.0",
+            "CFBundleName": safeName,
+            "CFBundleDisplayName": safeName,
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+            "LSMinimumSystemVersion": "14.0",
+            "NSHighResolutionCapable": true,
+            "MacportVMID": vmId.uuidString,
+            "MacportVMName": vmName,
+            "MacportGuestOS": guest.rawValue
+        ]
+
+        let plistData = try PropertyListSerialization.data(fromPropertyList: plistDict, format: .xml, options: 0)
+        try plistData.write(to: contentsURL.appendingPathComponent("Info.plist"))
+
+        // 2. PkgInfo
+        try "APPL????".write(to: contentsURL.appendingPathComponent("PkgInfo"), atomically: true, encoding: .ascii)
+
+        // 3. MacOS/launch executable script
+        let script = """
+        #!/bin/bash
+        # Macport Launcher for \(safeName)
+        open "macport://launch?vm=\(vmId.uuidString)" 2>/dev/null || open -b com.dakshraman.macport "macport://launch?vm=\(vmId.uuidString)"
+        """
+        let launchURL = macosURL.appendingPathComponent("launch")
+        try script.write(to: launchURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launchURL.path)
+
+        // 4. Resources/AppIcon.icns
+        let targetIcon = resourcesURL.appendingPathComponent("AppIcon.icns")
+        copyDefaultMacportIcon(to: targetIcon)
+
+        // 5. Register with macOS LaunchServices
+        registerWithLaunchServices(at: appBundleURL)
+
+        return appBundleURL
+    }
+
     private static func copyDefaultMacportIcon(to target: URL) {
         let fm = FileManager.default
         if let defaultICNS = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -945,6 +1018,7 @@ public enum MacportAppPublisher: Sendable {
         } else {
             let candidates = [
                 URL(fileURLWithPath: "/Applications/Macport.app/Contents/Resources/AppIcon.icns"),
+                URL(fileURLWithPath: "/Users/ramandaksh/Projects/Macport/Macport/Resources/AppIcon.icns"),
                 Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/AppIcon.icns")
             ]
             for cand in candidates where fm.fileExists(atPath: cand.path) {
