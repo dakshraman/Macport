@@ -1039,6 +1039,14 @@ struct WineBottleDetailView: View {
                 .tracking(0.5)
 
             VStack(spacing: 6) {
+                inspectorStandardButton(title: "Add to Applications", icon: "app.badge.checkmark") {
+                    exportPrimaryApp(to: .applications)
+                }
+
+                inspectorStandardButton(title: "Add to Desktop", icon: "desktopcomputer") {
+                    exportPrimaryApp(to: .desktop)
+                }
+
                 inspectorStandardButton(title: "Open C: Drive", icon: "folder.fill") {
                     openDriveC()
                 }
@@ -1597,6 +1605,48 @@ struct WineBottleDetailView: View {
             customCommand = path
             customArguments = ""
             executeCustomCommand()
+        }
+    }
+
+    // MARK: - Native Mac App Publishing (.app)
+
+    private func exportPrimaryApp(to destination: MacportAppPublisher.Destination) {
+        let primary = wineSettings.primaryExecutable
+        let match = installedShortcuts.first(where: { $0.executable == primary })
+        let targetName = match?.name ?? config.name
+        let exec = primary ?? installedShortcuts.first?.executable ?? "explorer.exe"
+        let icon = match?.iconURL ?? installedShortcuts.first?.iconURL
+
+        do {
+            let appURL = try MacportAppPublisher.exportLauncherApp(
+                bottleId: config.id,
+                bottleName: config.name,
+                appName: targetName,
+                executable: exec,
+                iconURL: icon,
+                to: destination
+            )
+            statusMessage = "Added '\(targetName)' to \(destination.displayName). Launch directly from Spotlight or Launchpad!"
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            statusMessage = "Failed to export application: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportShortcut(_ shortcut: WineProgramShortcut, to destination: MacportAppPublisher.Destination) {
+        do {
+            let appURL = try MacportAppPublisher.exportLauncherApp(
+                bottleId: config.id,
+                bottleName: config.name,
+                appName: shortcut.name,
+                executable: shortcut.executable,
+                iconURL: shortcut.iconURL,
+                to: destination
+            )
+            statusMessage = "Added '\(shortcut.name)' to \(destination.displayName). Launch directly from Spotlight or Launchpad!"
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } catch {
+            statusMessage = "Failed to export shortcut: \(error.localizedDescription)"
         }
     }
 }
