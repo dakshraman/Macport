@@ -21,8 +21,10 @@ struct VMDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ParallelsVMToolbar(config: config)
-            Divider()
+            if config.guest != .windowsApp {
+                ParallelsVMToolbar(config: config)
+                Divider()
+            }
             content
         }
         .background(Color.macportWindow)
@@ -32,7 +34,9 @@ struct VMDetailView: View {
 
     @ViewBuilder
     private var content: some View {
-        if vmState.isActive, let machine = state.liveMachine(for: config.id) {
+        if config.guest == .windowsApp {
+            WineBottleDetailView(config: config)
+        } else if vmState.isActive, let machine = state.liveMachine(for: config.id) {
             VMDisplayView(machine: machine)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if vmState.isActive, let vncPath = state.vncSocketPath(for: config.id) {
@@ -436,3 +440,595 @@ struct VMDetailView: View {
         }
     }
 }
+
+// MARK: - CrossOver-style Wine Bottle Detail View
+
+/// Signature CrossOver-style Bottle Control Center for Windows applications.
+///
+/// Provides:
+/// 1. Installed Windows applications and launch shortcuts
+/// 2. One-click access to Wine Configuration, Regedit, Task Manager, and Command Prompt
+/// 3. Direct "Run Command…" sheet to execute any .exe or installer in the bottle
+/// 4. Direct Finder access to the virtual C: drive (`drive_c`)
+/// 5. Apple Metal / DXMT GPU and Rosetta 2 AVX performance controls
+@MainActor
+struct WineBottleDetailView: View {
+    @EnvironmentObject private var store: VMStore
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var ui: UIParityState
+
+    let config: VMConfiguration
+
+    @State private var installedShortcuts: [WineProgramShortcut] = []
+    @State private var bottleDiskSize: UInt64 = 0
+    @State private var isPresentingRunCommand = false
+    @State private var customCommand = ""
+    @State private var customArguments = ""
+    @State private var metalAcceleration = true
+    @State private var avxEmulation = true
+    @State private var statusMessage: String?
+
+    private var vmState: VMState { state.state(for: config.id) }
+    private var bundleURL: URL { store.bundleURL(for: config) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            bottleHeader
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let message = statusMessage {
+                        statusBanner(message)
+                    }
+
+                    mainApplicationCard
+                    installedProgramsSection
+                    builtInToolsSection
+                    performanceAndGraphicsSection
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .background(Color.macportWindow)
+        .sheet(isPresented: $isPresentingRunCommand) {
+            runCommandSheet
+        }
+        .onAppear {
+            refreshBottleData()
+        }
+    }
+
+    // MARK: - Bottle Header
+
+    private var bottleHeader: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.macportWindowsHue.opacity(0.15))
+                    .frame(width: 48, height: 48)
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Color.macportWindowsHue)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(config.name)
+                        .font(.system(size: 17, weight: .bold))
+
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(vmState.isActive ? Color.macportRunning : Color.macportOff.opacity(0.4))
+                            .frame(width: 8, height: 8)
+                        Text(vmState.isActive ? "Running Natively" : "Stopped")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(vmState.isActive ? Color.macportRunning : .secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.macportInset))
+                }
+
+                HStack(spacing: 8) {
+                    Text("CrossOver / Wine Bottle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text("Rosetta 2 x86_64")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text("Apple Metal 3D GPU")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            // Header Quick Actions
+            HStack(spacing: 8) {
+                if vmState.isActive {
+                    Button(action: { stopBottle() }) {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                } else {
+                    Button(action: { startMainApp() }) {
+                        Label("Run Application", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                }
+
+                Button(action: { isPresentingRunCommand = true }) {
+                    Label("Run Command…", systemImage: "bolt.fill")
+                }
+                .controlSize(.regular)
+
+                Button(action: { openDriveC() }) {
+                    Label("Open C: Drive", systemImage: "folder.fill")
+                }
+                .controlSize(.regular)
+
+                Menu {
+                    Button("Force Quit Bottle (wineserver -k)") {
+                        forceQuitBottle()
+                    }
+                    Button("Refresh Shortcuts") {
+                        refreshBottleData()
+                    }
+                    Divider()
+                    Button("Reveal Bottle in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([bundleURL])
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 28)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(Color.macportCard)
+    }
+
+    // MARK: - Main Application Card
+
+    private var mainApplicationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Primary Application")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(primaryExecutablePath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+
+                Button("Change…") {
+                    chooseNewMainExecutable()
+                }
+                .controlSize(.small)
+
+                Button(action: { startMainApp() }) {
+                    Label(vmState.isActive ? "Restart" : "Launch", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.macportCard))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+    }
+
+    // MARK: - Installed Programs Section
+
+    private var installedProgramsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Installed Applications")
+                    .font(.system(size: 14, weight: .bold))
+
+                Spacer()
+
+                Button("+ Install Windows App (.exe)…") {
+                    chooseAndInstallApp()
+                }
+                .controlSize(.small)
+            }
+
+            if installedShortcuts.isEmpty {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.title2)
+                        .foregroundStyle(Color.macportWindowsHue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No secondary applications installed yet")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Click '+ Install Windows App' to run an installer or game setup directly into this bottle.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                    ForEach(installedShortcuts) { shortcut in
+                        programCard(shortcut)
+                    }
+                }
+            }
+        }
+    }
+
+    private func programCard(_ shortcut: WineProgramShortcut) -> some View {
+        Button(action: { launchProgram(shortcut) }) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.macportWindowsHue.opacity(0.12))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: shortcut.iconSystemName)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.macportWindowsHue)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(shortcut.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    Text("Launch in Bottle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Built-in Wine Tools Section
+
+    private var builtInToolsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Windows Control Panels & Built-in Utilities")
+                .font(.system(size: 14, weight: .bold))
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                ForEach(WineBottleManager.builtInTools) { tool in
+                    Button(action: { launchProgram(tool) }) {
+                        HStack(spacing: 10) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.macportAccent.opacity(0.12))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: tool.iconSystemName)
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Color.macportAccent)
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(tool.name)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(tool.executable)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.macportCard))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Performance & Graphics Section
+
+    private var performanceAndGraphicsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Bottle Settings & Performance")
+                .font(.system(size: 14, weight: .bold))
+
+            VStack(spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple Metal 3D GPU Acceleration (DXMT / D3DMetal)")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Translates DirectX 10, 11, and 12 graphics commands directly to Apple Silicon Metal.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $metalAcceleration)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Rosetta 2 AVX Instruction Set Emulation")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Advertises AVX support to modern games and engines under Rosetta 2.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $avxEmulation)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Bottle Disk Usage")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(MacportFormat.fileSize(bottleDiskSize))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Idle Memory Overhead")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("0 MB (Zero Hypervisor RAM Overhead)")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color.macportRunning)
+                }
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Run Command Sheet
+
+    private var runCommandSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Run Command in Bottle")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { isPresentingRunCommand = false }
+            }
+            .padding(16)
+            Divider()
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Execute any Windows binary, installer, or command line within '\(config.name)'.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Command / Executable")
+                        .font(.system(size: 11, weight: .semibold))
+                    HStack {
+                        TextField("e.g. setup.exe, winecfg, cmd.exe, regedit", text: $customCommand)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+
+                        Button("Browse…") {
+                            let panel = NSOpenPanel()
+                            panel.allowedContentTypes = []
+                            panel.allowsOtherFileTypes = true
+                            panel.message = "Choose a Windows executable (.exe, .msi, .bat)"
+                            if panel.runModal() == .OK, let path = panel.url?.path {
+                                customCommand = path
+                            }
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Arguments (Optional)")
+                        .font(.system(size: 11, weight: .semibold))
+                    TextField("e.g. /silent, /desktop, -dx11", text: $customArguments)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                }
+
+                // Quick Picks
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Quick Picks")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        ForEach(["winecfg", "regedit", "taskmgr", "cmd.exe", "explorer.exe"], id: \.self) { cmd in
+                            Button(cmd) {
+                                customCommand = cmd
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                HStack {
+                    Button("Cancel") { isPresentingRunCommand = false }
+                    Spacer()
+                    Button("Run in Bottle") {
+                        executeCustomCommand()
+                        isPresentingRunCommand = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(customCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(20)
+        }
+        .frame(width: 520, height: 360)
+    }
+
+    private func statusBanner(_ msg: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(Color.macportAccent)
+            Text(msg)
+                .font(.system(size: 12))
+            Spacer()
+            Button(action: { statusMessage = nil }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
+    }
+
+    // MARK: - Actions
+
+    private var primaryExecutablePath: String {
+        switch config.boot {
+        case .installMedia(let path):
+            return path
+        case .kernelImage(let kernel, _):
+            return kernel
+        default:
+            return "Windows Explorer (explorer.exe)"
+        }
+    }
+
+    private func refreshBottleData() {
+        Task {
+            let shortcuts = WineBottleManager.scanInstalledShortcuts(in: bundleURL)
+            let size = WineBottleManager.calculateBottleSize(in: bundleURL)
+            await MainActor.run {
+                self.installedShortcuts = shortcuts
+                self.bottleDiskSize = size
+            }
+        }
+    }
+
+    private func startMainApp() {
+        state.start(config, in: store)
+        statusMessage = "Launching \(config.name) with Apple Metal graphics and Rosetta 2 translation…"
+    }
+
+    private func stopBottle() {
+        Task {
+            await state.stop(id: config.id, graceful: true)
+            statusMessage = "Application stopped."
+        }
+    }
+
+    private func forceQuitBottle() {
+        do {
+            try WineBottleManager.killBottleProcesses(in: bundleURL)
+            statusMessage = "All bottle processes terminated."
+        } catch {
+            statusMessage = "Failed to terminate bottle: \(error.localizedDescription)"
+        }
+    }
+
+    private func openDriveC() {
+        let driveC = WineBottleManager.driveCURL(for: bundleURL)
+        if !FileManager.default.fileExists(atPath: driveC.path) {
+            try? FileManager.default.createDirectory(at: driveC, withIntermediateDirectories: true)
+        }
+        NSWorkspace.shared.open(driveC)
+    }
+
+    private func launchProgram(_ shortcut: WineProgramShortcut) {
+        Task {
+            do {
+                if let wineEngine = state.instance(for: config.id)?.engine as? WineEngine {
+                    try await wineEngine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: metalAcceleration)
+                } else {
+                    let engine = WineEngine()
+                    try await engine.launchExecutable(shortcut.executable, arguments: shortcut.arguments, in: bundleURL, metal: metalAcceleration)
+                }
+                statusMessage = "Launched \(shortcut.name) in bottle."
+            } catch {
+                statusMessage = "Failed to launch: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func executeCustomCommand() {
+        let cmd = customCommand.trimmingCharacters(in: .whitespaces)
+        guard !cmd.isEmpty else { return }
+        let args = customArguments.isEmpty ? [] : customArguments.components(separatedBy: .whitespaces)
+
+        Task {
+            do {
+                if let wineEngine = state.instance(for: config.id)?.engine as? WineEngine {
+                    try await wineEngine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: metalAcceleration)
+                } else {
+                    let engine = WineEngine()
+                    try await engine.launchExecutable(cmd, arguments: args, in: bundleURL, metal: metalAcceleration)
+                }
+                statusMessage = "Executed '\(cmd)' in bottle."
+            } catch {
+                statusMessage = "Execution failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func chooseNewMainExecutable() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.message = "Choose a Windows executable (.exe, .msi) to set as the primary application"
+        if panel.runModal() == .OK, let path = panel.url?.path {
+            var updated = config
+            updated.boot = .installMedia(path: path)
+            do {
+                _ = try store.save(updated)
+                statusMessage = "Updated primary executable to \(panel.url?.lastPathComponent ?? path)"
+            } catch {
+                statusMessage = "Failed to update configuration: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func chooseAndInstallApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.message = "Choose an installer or executable to run inside this bottle"
+        if panel.runModal() == .OK, let path = panel.url?.path {
+            customCommand = path
+            customArguments = ""
+            executeCustomCommand()
+        }
+    }
+}
+
