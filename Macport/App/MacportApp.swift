@@ -264,7 +264,7 @@ struct MacportApp: App {
         guard let config = store.machines.first(where: { $0.id == targetUUID }) else { return }
 
         ui.selection = config.id
-        ui.viewMode = .detail
+        ui.viewMode = .split
         NSApp.activate(ignoringOtherApps: true)
 
         let bundleURL = store.bundleURL(for: config)

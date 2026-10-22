@@ -21,7 +21,6 @@ struct VMDetailView: View {
 
     @State private var showTechnicalDetails = false
     @State private var vmStatusMessage: String?
-    @State private var vmStatusMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
