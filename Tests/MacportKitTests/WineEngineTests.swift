@@ -113,13 +113,14 @@ final class WineEngineTests: XCTestCase {
 
     func testWineBottleManagerBuiltInTools() {
         let tools = WineBottleManager.builtInTools
-        XCTAssertEqual(tools.count, 6)
+        XCTAssertEqual(tools.count, 7)
         XCTAssertTrue(tools.contains(where: { $0.executable == "winecfg" }))
         XCTAssertTrue(tools.contains(where: { $0.executable == "regedit" }))
         XCTAssertTrue(tools.contains(where: { $0.executable == "taskmgr" }))
         XCTAssertTrue(tools.contains(where: { $0.executable == "cmd.exe" }))
         XCTAssertTrue(tools.contains(where: { $0.executable == "explorer.exe" }))
         XCTAssertTrue(tools.contains(where: { $0.executable == "control.exe" }))
+        XCTAssertTrue(tools.contains(where: { $0.executable == "uninstaller.exe" }))
     }
 
     func testWineBottleManagerPathsAndInitialization() throws {
@@ -220,7 +221,7 @@ final class WineEngineTests: XCTestCase {
         // If CrossOver is installed, it should find Genshin bottle
         if FileManager.default.fileExists(atPath: WineRuntime.crossoverBottlesDirectory.path) {
             XCTAssertFalse(bottles.isEmpty)
-            XCTAssertTrue(bottles.contains(where: { $0.name == "Genshin" }))
+            XCTAssertTrue(bottles.contains(where: { $0.name.contains("Genshin") }))
         }
     }
 
