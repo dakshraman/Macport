@@ -129,4 +129,45 @@ public final class VMStore: ObservableObject {
         while existing.contains("\(candidate) \(index)") { index += 1 }
         return "\(candidate) \(index)"
     }
+
+    /// Renames a VM configuration and synchronizes underlying storage and bottle metadata.
+    @discardableResult
+    public func rename(_ config: VMConfiguration, to newName: String) throws -> VMConfiguration {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return config }
+        guard trimmed != config.name else { return config }
+
+        var updated = config
+        let oldName = config.name
+
+        if config.guest == .windowsApp {
+            let bURL = bundleURL(for: config)
+            let bottleSymlink = bURL.appendingPathComponent("bottle")
+            let fm = FileManager.default
+
+            // If the bottle directory in the bundle is a symlink pointing to CrossOver's Bottles directory:
+            if let dest = try? fm.destinationOfSymbolicLink(atPath: bottleSymlink.path) {
+                let oldTargetURL = URL(fileURLWithPath: dest, relativeTo: bURL).standardized
+                let coBottlesDir = WineRuntime.crossoverBottlesDirectory
+                if oldTargetURL.path.hasPrefix(coBottlesDir.path) {
+                    let sanitizedNewName = trimmed
+                        .replacingOccurrences(of: "/", with: "-")
+                        .replacingOccurrences(of: ":", with: "-")
+                    let newTargetURL = coBottlesDir.appendingPathComponent(sanitizedNewName, isDirectory: true)
+                    if !fm.fileExists(atPath: newTargetURL.path) {
+                        try? fm.moveItem(at: oldTargetURL, to: newTargetURL)
+                        try? fm.removeItem(at: bottleSymlink)
+                        try? fm.createSymbolicLink(at: bottleSymlink, withDestinationURL: newTargetURL)
+                    }
+                }
+            }
+
+            if updated.wineSettings?.linkedCrossOverBottle == oldName {
+                updated.wineSettings?.linkedCrossOverBottle = trimmed
+            }
+        }
+
+        updated.name = trimmed
+        return try save(updated)
+    }
 }

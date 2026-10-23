@@ -334,6 +334,34 @@ public struct WineProgramShortcut: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Represents an application or package installed inside a Wine bottle,
+/// extracted from the Windows Registry, Start Menu, or program directory.
+public struct WineInstalledApp: Identifiable, Hashable, Sendable {
+    public var id: String { key }
+    public let key: String
+    public let displayName: String
+    public let uninstallString: String?
+    public let installLocation: String?
+    public let iconURL: URL?
+    public let isSystemTool: Bool
+
+    public init(
+        key: String,
+        displayName: String,
+        uninstallString: String? = nil,
+        installLocation: String? = nil,
+        iconURL: URL? = nil,
+        isSystemTool: Bool = false
+    ) {
+        self.key = key
+        self.displayName = displayName
+        self.uninstallString = uninstallString
+        self.installLocation = installLocation
+        self.iconURL = iconURL
+        self.isSystemTool = isSystemTool
+    }
+}
+
 /// Provides CrossOver-style bottle prefix inspection, installed application discovery,
 /// and management for Windows apps running under `WineEngine`.
 public enum WineBottleManager: Sendable {
@@ -682,6 +710,274 @@ public enum WineBottleManager: Sendable {
             }
         }
         return nil
+    }
+
+    // MARK: - Installed Application Discovery & Uninstallation
+
+    /// Parses a Windows command line string into an executable path and its arguments.
+    public static func parseCommandAndArguments(_ commandLine: String) -> (executable: String, arguments: [String]) {
+        var str = commandLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !str.isEmpty else { return ("", []) }
+
+        if str.hasPrefix("str(2):") {
+            str = String(str.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        }
+
+        var executable = ""
+        var arguments: [String] = []
+
+        if str.hasPrefix("\"") {
+            let afterFirst = str.index(after: str.startIndex)
+            if let secondQuote = str[afterFirst...].firstIndex(of: "\"") {
+                executable = String(str[afterFirst..<secondQuote])
+                let rest = str[str.index(after: secondQuote)...].trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty {
+                    arguments = parseCommandLineArguments(rest)
+                }
+            } else {
+                executable = str.replacingOccurrences(of: "\"", with: "")
+            }
+        } else {
+            if let exeRange = str.range(of: ".exe ", options: .caseInsensitive) {
+                executable = String(str[..<exeRange.lowerBound]) + ".exe"
+                let rest = String(str[exeRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty {
+                    arguments = parseCommandLineArguments(rest)
+                }
+            } else {
+                let parts = str.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if let first = parts.first {
+                    executable = first
+                    arguments = Array(parts.dropFirst())
+                }
+            }
+        }
+
+        return (executable, arguments)
+    }
+
+    private static func parseCommandLineArguments(_ argsString: String) -> [String] {
+        var args: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for char in argsString {
+            if char == "\"" {
+                inQuotes.toggle()
+            } else if char == " " && !inQuotes {
+                if !current.isEmpty {
+                    args.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(char)
+            }
+        }
+        if !current.isEmpty {
+            args.append(current)
+        }
+        return args
+    }
+
+    /// Scans the bottle registry and directory structures for installed applications.
+    public static func scanInstalledApplications(in bundle: URL) -> [WineInstalledApp] {
+        let driveC = driveCURL(for: bundle)
+        let actualBottle = bottleURL(for: bundle).resolvingSymlinksInPath()
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: actualBottle.path) else { return [] }
+
+        var apps: [WineInstalledApp] = []
+        var seenKeys = Set<String>()
+
+        let regFiles = [
+            actualBottle.appendingPathComponent("system.reg"),
+            actualBottle.appendingPathComponent("user.reg")
+        ]
+
+        for regFile in regFiles where fm.fileExists(atPath: regFile.path) {
+            guard let content = try? String(contentsOf: regFile, encoding: .utf8) else { continue }
+            let lines = content.components(separatedBy: .newlines)
+            var currentKey: String?
+            var currentDisplay: String?
+            var currentUninstall: String?
+            var currentLocation: String?
+            var currentIcon: String?
+
+            func commitEntry() {
+                if let key = currentKey, let name = currentDisplay, !seenKeys.contains(key) {
+                    seenKeys.insert(key)
+                    let isSys = key.contains("CXHTML") || key.contains("Mono") || key.contains("Gecko") || name.contains("HTML engine") || name.contains("Windows Support")
+                    var resolvedIcon: URL?
+                    if let iconStr = currentIcon, !iconStr.isEmpty {
+                        let clean = iconStr.replacingOccurrences(of: "\\", with: "/").replacingOccurrences(of: "\"", with: "")
+                        if clean.lowercased().hasPrefix("c:/") {
+                            resolvedIcon = driveC.appendingPathComponent(String(clean.dropFirst(3)))
+                        } else {
+                            resolvedIcon = URL(fileURLWithPath: clean)
+                        }
+                    }
+                    if resolvedIcon == nil || !fm.fileExists(atPath: resolvedIcon!.path) {
+                        resolvedIcon = findIcon(for: name, executable: currentUninstall ?? "", in: actualBottle)
+                    }
+                    apps.append(WineInstalledApp(
+                        key: key,
+                        displayName: name,
+                        uninstallString: currentUninstall,
+                        installLocation: currentLocation,
+                        iconURL: resolvedIcon,
+                        isSystemTool: isSys
+                    ))
+                }
+                currentKey = nil
+                currentDisplay = nil
+                currentUninstall = nil
+                currentLocation = nil
+                currentIcon = nil
+            }
+
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("[") && trimmed.contains("CurrentVersion\\Uninstall\\") {
+                    commitEntry()
+                    if let start = trimmed.range(of: "CurrentVersion\\Uninstall\\"),
+                       let end = trimmed.range(of: "]", range: start.upperBound..<trimmed.endIndex) {
+                        currentKey = String(trimmed[start.upperBound..<end.lowerBound])
+                    }
+                } else if trimmed.hasPrefix("[") {
+                    commitEntry()
+                } else if currentKey != nil {
+                    if trimmed.hasPrefix("\"DisplayName\"=") {
+                        currentDisplay = extractRegValue(trimmed)
+                    } else if trimmed.hasPrefix("\"UninstallString\"=") {
+                        currentUninstall = extractRegValue(trimmed)
+                    } else if trimmed.hasPrefix("\"InstallLocation\"=") {
+                        currentLocation = extractRegValue(trimmed)
+                    } else if trimmed.hasPrefix("\"DisplayIcon\"=") {
+                        currentIcon = extractRegValue(trimmed)
+                    }
+                }
+            }
+            commitEntry()
+        }
+
+        // Also check if any discovered program shortcut has a local uninstaller executable
+        let shortcuts = scanInstalledShortcuts(in: bundle)
+        for sc in shortcuts {
+            let scNameLow = sc.name.lowercased()
+            if !apps.contains(where: { $0.displayName.lowercased() == scNameLow }) {
+                let exeURL = URL(fileURLWithPath: sc.executable)
+                let dir = exeURL.deletingLastPathComponent()
+                let parentDir = dir.deletingLastPathComponent()
+
+                var uninstPath: String?
+                let candidates = ["unins000.exe", "uninstall.exe", "Uninstall.exe", "unins001.exe", "uninst.exe"]
+                for cand in candidates {
+                    let candURL = dir.appendingPathComponent(cand)
+                    if fm.fileExists(atPath: candURL.path) {
+                        uninstPath = candURL.path
+                        break
+                    }
+                    let parentCandURL = parentDir.appendingPathComponent(cand)
+                    if fm.fileExists(atPath: parentCandURL.path) {
+                        uninstPath = parentCandURL.path
+                        break
+                    }
+                }
+
+                apps.append(WineInstalledApp(
+                    key: sc.name,
+                    displayName: sc.name,
+                    uninstallString: uninstPath,
+                    installLocation: dir.path,
+                    iconURL: sc.iconURL,
+                    isSystemTool: false
+                ))
+            }
+        }
+
+        return apps.sorted {
+            if $0.isSystemTool != $1.isSystemTool {
+                return !$0.isSystemTool && $1.isSystemTool
+            }
+            return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private static func extractRegValue(_ line: String) -> String? {
+        guard let eqIndex = line.firstIndex(of: "=") else { return nil }
+        var val = String(line[line.index(after: eqIndex)...]).trimmingCharacters(in: .whitespaces)
+        if val.hasPrefix("str(2):") {
+            val = String(val.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        }
+        if val.hasPrefix("\"") && val.hasSuffix("\"") && val.count >= 2 {
+            val = String(val.dropFirst().dropLast())
+        }
+        return val.replacingOccurrences(of: "\\\\", with: "\\")
+    }
+
+    /// Finds the best uninstall command for a given application shortcut.
+    public static func findUninstallCommand(
+        for shortcut: WineProgramShortcut,
+        in bundle: URL
+    ) -> (executable: String, arguments: [String], isGeneric: Bool) {
+        let installed = scanInstalledApplications(in: bundle)
+        let shortcutLow = shortcut.name.lowercased()
+
+        // 1. Try matching installed apps by display name
+        if let match = installed.first(where: {
+            let dispLow = $0.displayName.lowercased()
+            return dispLow == shortcutLow || dispLow.contains(shortcutLow) || shortcutLow.contains(dispLow)
+        }), let uninstStr = match.uninstallString, !uninstStr.isEmpty {
+            let parsed = parseCommandAndArguments(uninstStr)
+            return (parsed.executable, parsed.arguments, false)
+        }
+
+        // 2. Try matching by executable location
+        let exePath = shortcut.executable
+        if let match = installed.first(where: {
+            if let loc = $0.installLocation, !loc.isEmpty, exePath.contains(loc) { return true }
+            return false
+        }), let uninstStr = match.uninstallString, !uninstStr.isEmpty {
+            let parsed = parseCommandAndArguments(uninstStr)
+            return (parsed.executable, parsed.arguments, false)
+        }
+
+        // 3. Check for local uninstaller in same or parent directory
+        let exeURL = URL(fileURLWithPath: exePath)
+        let dir = exeURL.deletingLastPathComponent()
+        let parentDir = dir.deletingLastPathComponent()
+        let fm = FileManager.default
+
+        let candidates = ["unins000.exe", "uninstall.exe", "Uninstall.exe", "unins001.exe", "uninst.exe"]
+        for cand in candidates {
+            let candURL = dir.appendingPathComponent(cand)
+            if fm.fileExists(atPath: candURL.path) {
+                return (candURL.path, [], false)
+            }
+            let parentCandURL = parentDir.appendingPathComponent(cand)
+            if fm.fileExists(atPath: parentCandURL.path) {
+                return (parentCandURL.path, [], false)
+            }
+        }
+
+        // 4. Fallback to Wine's built-in Add/Remove Programs
+        return ("uninstaller.exe", [], true)
+    }
+
+    /// Removes exported desktop and applications shortcuts for the given application.
+    public static func removeLauncherApps(appName: String) {
+        let fm = FileManager.default
+        let appNameApp = "\(appName).app"
+        let destinations = [
+            fm.urls(for: .applicationDirectory, in: .userDomainMask).first?.appendingPathComponent(appNameApp),
+            fm.urls(for: .desktopDirectory, in: .userDomainMask).first?.appendingPathComponent(appNameApp)
+        ]
+
+        for dest in destinations.compactMap({ $0 }) {
+            if fm.fileExists(atPath: dest.path) {
+                try? fm.removeItem(at: dest)
+            }
+        }
     }
 
     /// Terminates lingering `wineserver` background processes for a bottle prefix.
