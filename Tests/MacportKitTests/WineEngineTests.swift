@@ -263,4 +263,51 @@ final class WineEngineTests: XCTestCase {
             XCTFail("Expected success but got \(err)")
         }
     }
+
+    func testParseCommandAndArguments() {
+        let (e1, a1) = WineBottleManager.parseCommandAndArguments("C:\\Program Files\\HoYoPlay\\launcher.exe --uninstall_game=nap_global")
+        XCTAssertEqual(e1, "C:\\Program Files\\HoYoPlay\\launcher.exe")
+        XCTAssertEqual(a1, ["--uninstall_game=nap_global"])
+
+        let (e2, a2) = WineBottleManager.parseCommandAndArguments("\"C:\\Program Files\\Test\\unins000.exe\" /SILENT /NORESTART")
+        XCTAssertEqual(e2, "C:\\Program Files\\Test\\unins000.exe")
+        XCTAssertEqual(a2, ["/SILENT", "/NORESTART"])
+
+        let (e3, a3) = WineBottleManager.parseCommandAndArguments("str(2):\"MsiExec.exe /I{0591009C-75D7-5F33-B5DF-4F47111155EC}\"")
+        XCTAssertEqual(e3, "MsiExec.exe")
+        XCTAssertEqual(a3, ["/I{0591009C-75D7-5F33-B5DF-4F47111155EC}"])
+
+        let (e4, a4) = WineBottleManager.parseCommandAndArguments("uninstaller.exe")
+        XCTAssertEqual(e4, "uninstaller.exe")
+        XCTAssertEqual(a4, [])
+    }
+
+    @MainActor
+    func testVMStoreRename() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let store = VMStore(root: tempRoot)
+        let config = VMConfiguration(
+            name: "Initial Bottle",
+            guest: .windowsApp,
+            cpuCount: 4,
+            memoryBytes: 4 * 1024 * 1024 * 1024,
+            diskBytes: 0,
+            network: .sharedNAT,
+            sharedFolders: [],
+            boot: .diskOnly
+        )
+        try store.save(config)
+
+        let renamed = try store.rename(config, to: "Renamed Bottle")
+        XCTAssertEqual(renamed.name, "Renamed Bottle")
+        XCTAssertEqual(store.machines.first?.name, "Renamed Bottle")
+
+        // Reload from disk to verify persistence
+        let store2 = VMStore(root: tempRoot)
+        store2.load()
+        XCTAssertEqual(store2.machines.first?.name, "Renamed Bottle")
+    }
 }

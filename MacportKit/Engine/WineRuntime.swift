@@ -409,6 +409,13 @@ public enum WineBottleManager: Sendable {
             executable: "control.exe",
             iconSystemName: "slider.horizontal.3",
             isBuiltIn: true
+        ),
+        WineProgramShortcut(
+            id: "uninstaller",
+            name: "Add/Remove Programs",
+            executable: "uninstaller.exe",
+            iconSystemName: "xmark.bin.fill",
+            isBuiltIn: true
         )
     ]
 
