@@ -435,6 +435,45 @@ public enum WineBottleManager: Sendable {
         return FileManager.default.fileExists(atPath: driveC.path)
     }
 
+    /// Dynamically resolves and heals Windows executable paths against a bottle prefix.
+    /// Handles stale absolute host paths (e.g. after bottle renaming), Windows paths (C:\...),
+    /// relative paths, and existing host paths.
+    public static func resolveExecutablePath(_ path: String, in bundle: URL) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        let driveC = driveCURL(for: bundle)
+        let fm = FileManager.default
+
+        // 1. If path exists directly on host, return it
+        if trimmed.hasPrefix("/") && fm.fileExists(atPath: trimmed) {
+            return trimmed
+        }
+
+        // 2. Dynamic Path Healing: If path contains /drive_c/ (e.g. from an old bottle path)
+        if let driveCRange = trimmed.range(of: "/drive_c/", options: .caseInsensitive) {
+            let relativePath = String(trimmed[driveCRange.upperBound...])
+            let candidate = driveC.appendingPathComponent(relativePath).standardized
+            if fm.fileExists(atPath: candidate.path) {
+                return candidate.path
+            }
+        }
+
+        // 3. Windows style path (e.g. C:\Program Files\... or C:/...)
+        var clean = trimmed.replacingOccurrences(of: "\\", with: "/")
+        if clean.lowercased().hasPrefix("c:/") {
+            clean = String(clean.dropFirst(3))
+        }
+
+        // 4. Relative path within drive_c
+        let candidate = driveC.appendingPathComponent(clean).standardized
+        if fm.fileExists(atPath: candidate.path) {
+            return candidate.path
+        }
+
+        return trimmed
+    }
+
     /// Calculates the disk footprint of the bottle's `drive_c`.
     public static func calculateBottleSize(in bundle: URL) -> UInt64 {
         let driveC = driveCURL(for: bundle)
@@ -1310,6 +1349,50 @@ public enum MacportAppPublisher: Sendable {
         registerWithLaunchServices(at: appBundleURL)
 
         return appBundleURL
+    }
+
+    /// Synchronizes existing exported launcher .app bundles in Applications and Desktop when a bottle is renamed.
+    public static func synchronizeLaunchers(for bottleId: UUID, newBottleName: String, bundleURL: URL) {
+        let fm = FileManager.default
+        let searchDirectories = [Destination.applications.directoryURL, Destination.desktop.directoryURL]
+
+        for dir in searchDirectories where fm.fileExists(atPath: dir.path) {
+            guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
+            for appURL in items where appURL.pathExtension.lowercased() == "app" {
+                let infoPlistURL = appURL.appendingPathComponent("Contents/Info.plist")
+                guard fm.fileExists(atPath: infoPlistURL.path),
+                      let data = try? Data(contentsOf: infoPlistURL),
+                      var plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
+                      let idStr = plist["MacportBottleID"] as? String,
+                      idStr.lowercased() == bottleId.uuidString.lowercased()
+                else { continue }
+
+                // Update Info.plist bottle name
+                plist["MacportBottleName"] = newBottleName
+
+                // Heal executable path
+                let currentExec = plist["MacportExecutable"] as? String ?? ""
+                let resolvedExec = WineBottleManager.resolveExecutablePath(currentExec, in: bundleURL)
+                plist["MacportExecutable"] = resolvedExec
+
+                if let updatedData = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+                    try? updatedData.write(to: infoPlistURL)
+                }
+
+                // Rewrite launch script
+                let launchURL = appURL.appendingPathComponent("Contents/MacOS/launch")
+                let safeName = plist["CFBundleName"] as? String ?? appURL.deletingPathExtension().lastPathComponent
+                let encodedExec = resolvedExec.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? resolvedExec
+                let script = """
+                #!/bin/bash
+                # Macport Launcher for \(safeName) in bottle \(newBottleName)
+                open "macport://launch?bottle=\(bottleId.uuidString)&exec=\(encodedExec)" 2>/dev/null || open -b com.dakshraman.macport "macport://launch?bottle=\(bottleId.uuidString)&exec=\(encodedExec)"
+                """
+                if (try? script.write(to: launchURL, atomically: true, encoding: .utf8)) != nil {
+                    try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launchURL.path)
+                }
+            }
+        }
     }
 
     /// Exports a native macOS `.app` launcher bundle for a Virtual Machine.
