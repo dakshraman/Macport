@@ -30,6 +30,8 @@ final class UIParityState: ObservableObject {
     @Published var isPresentingSnapshots = false
     @Published var cloneTarget: VMConfiguration?
     @Published var deleteTarget: VMConfiguration?
+    @Published var renameTarget: VMConfiguration?
+    @Published var bottleUninstallTarget: VMConfiguration?
 
     /// Drives the window-title badge and the menu bar extra's visibility.
     @Published private(set) var activeCount = 0
