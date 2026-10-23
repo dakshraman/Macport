@@ -2,14 +2,14 @@ import AppKit
 import SwiftUI
 import MacportKit
 
-/// Authentic CrossOver-style Left Sidebar.
+/// The Parallels Desktop + UTM style Left Sidebar / Virtual Machine Library.
 ///
 /// Features:
-/// 1. Top Macport Brand Header (Apple Pro squircle emblem + bold letter-spaced logo)
-/// 2. "Home" navigation row with blue house icon
-/// 3. "BOTTLES" section listing all Windows bottles with subtle active pill selection
-/// 4. "VIRTUAL MACHINES" section for any other hypervisor guests (Linux, macOS, Windows ARM)
-/// 5. Docked "+ Install" button at the bottom
+/// 1. Top Macport Brand Header (Apple Pro squircle emblem + bold typography)
+/// 2. Control Center / Gallery quick-access row (`⌘0`)
+/// 3. Organized Virtual Machine categories (Windows, Linux, macOS)
+/// 4. Rich VM list items with OS badges, hardware specs summary, and live status dots
+/// 5. Docked "+ New Machine" and "Import" buttons at the bottom
 @MainActor
 struct VMLibraryView: View {
     @EnvironmentObject private var store: VMStore
@@ -18,14 +18,34 @@ struct VMLibraryView: View {
 
     @Binding var selection: VMConfiguration.ID?
 
-    @State private var hoveredBottleId: UUID?
+    @State private var hoveredVMId: UUID?
+    @State private var searchText = ""
 
-    private var bottleConfigs: [VMConfiguration] {
-        store.machines.filter { $0.guest == .windowsApp }
+    private var allMachines: [VMConfiguration] {
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            return store.machines
+        }
+        let query = searchText.lowercased()
+        return store.machines.filter {
+            $0.name.lowercased().contains(query) ||
+            $0.guest.displayName.lowercased().contains(query)
+        }
     }
 
-    private var hypervisorConfigs: [VMConfiguration] {
-        store.machines.filter { $0.guest != .windowsApp }
+    private var windowsMachines: [VMConfiguration] {
+        allMachines.filter { $0.guest == .windowsARM }
+    }
+
+    private var linuxMachines: [VMConfiguration] {
+        allMachines.filter { $0.guest == .linuxARM }
+    }
+
+    private var macosMachines: [VMConfiguration] {
+        allMachines.filter { $0.guest == .macOSGuest }
+    }
+
+    private var otherMachines: [VMConfiguration] {
+        allMachines.filter { $0.guest != .windowsARM && $0.guest != .linuxARM && $0.guest != .macOSGuest }
     }
 
     var body: some View {
@@ -33,344 +53,289 @@ struct VMLibraryView: View {
             // MARK: - Brand Logo Header
             brandHeader
                 .padding(.horizontal, 16)
-                .padding(.top, 18)
-                .padding(.bottom, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
+
+            // Search Filter Field
+            searchBar
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
 
             // MARK: - Navigation List
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    // Home Row
-                    homeNavRow
+                VStack(alignment: .leading, spacing: 14) {
+                    // Control Center Gallery Row
+                    controlCenterRow
 
-                    // Bottles Section
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("BOTTLES")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(Color(white: 0.5))
-                                .tracking(0.5)
+                    Divider()
+                        .padding(.horizontal, 4)
 
-                            Spacer()
-
-                            Button {
-                                state.isPresentingCreateSheet = true
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Color(white: 0.6))
-                                    .frame(width: 18, height: 18)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("New Bottle…")
+                    if store.machines.isEmpty {
+                        emptyLibraryPrompt
+                    } else {
+                        // Windows Section
+                        if !windowsMachines.isEmpty {
+                            machineSection(title: "WINDOWS", icon: "square.grid.2x2.fill", color: .blue, machines: windowsMachines)
                         }
-                        .padding(.horizontal, 12)
 
-                        if bottleConfigs.isEmpty {
-                            Text("No bottles created")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color(white: 0.4))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-                        } else {
-                            VStack(spacing: 2) {
-                                ForEach(bottleConfigs) { config in
-                                    bottleRow(config)
-                                }
-                            }
+                        // Linux Section
+                        if !linuxMachines.isEmpty {
+                            machineSection(title: "LINUX", icon: "terminal.fill", color: .orange, machines: linuxMachines)
                         }
-                    }
 
-                    // Virtual Machines Section (if any non-Wine VMs exist)
-                    if !hypervisorConfigs.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("VIRTUAL MACHINES")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(Color(white: 0.5))
-                                .tracking(0.5)
-                                .padding(.horizontal, 12)
+                        // macOS Section
+                        if !macosMachines.isEmpty {
+                            machineSection(title: "MACOS", icon: "apple.logo", color: .secondary, machines: macosMachines)
+                        }
 
-                            VStack(spacing: 2) {
-                                ForEach(hypervisorConfigs) { config in
-                                    vmRow(config)
-                                }
-                            }
+                        // Other / Custom Section
+                        if !otherMachines.isEmpty {
+                            machineSection(title: "VIRTUAL MACHINES", icon: "opticaldisc.fill", color: .purple, machines: otherMachines)
                         }
                     }
                 }
                 .padding(.horizontal, 8)
+                .padding(.vertical, 4)
             }
 
             Spacer(minLength: 0)
 
-            // MARK: - Bottom Docked Install Bar
+            // MARK: - Bottom Actions Bar
             Divider()
-                .background(Color.white.opacity(0.08))
 
-            bottomInstallBar
-                .padding(.horizontal, 16)
+            bottomActionsBar
+                .padding(.horizontal, 14)
                 .padding(.vertical, 12)
         }
-        .frame(minWidth: 210, idealWidth: 230, maxWidth: 260)
-        .background(Color.crossoverSidebar)
+        .frame(minWidth: 230, idealWidth: 250, maxWidth: 290)
+        .background(Color.macportWindow)
     }
 
     // MARK: - Brand Header
 
     private var brandHeader: some View {
-        HStack(spacing: 12) {
-            MacportAppLogoView(size: 38)
+        HStack(spacing: 10) {
+            MacportAppLogoView(size: 32)
 
-            // Stylized Title
             VStack(alignment: .leading, spacing: 1) {
-                Text("MACPORT")
-                    .font(.system(size: 16, weight: .heavy, design: .default))
-                    .tracking(2.5)
-                    .foregroundStyle(.white)
-
-                Text("PRO EDITION")
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(1.5)
-                    .foregroundStyle(Color.crossoverBlue)
+                Text("Macport")
+                    .font(.system(size: 15, weight: .bold))
+                Text("Hypervisor Manager")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            Button {
+                state.isPresentingCreateSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.macportCard))
+                    .overlay(Circle().stroke(Color.macportBorderSubtle, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("New Virtual Machine… (⌘N)")
         }
     }
 
-    // MARK: - Home Navigation Row
+    // MARK: - Search Bar
 
-    private var homeNavRow: some View {
-        let isSelected = (selection == nil)
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            TextField("Search virtual machines…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.macportCard))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.macportBorderSubtle, lineWidth: 1))
+    }
+
+    // MARK: - Control Center Gallery Row
+
+    private var controlCenterRow: some View {
+        let isGallerySelected = (selection == nil && ui.viewMode == .gallery)
 
         return Button {
-            selection = nil
+            withAnimation(.easeInOut(duration: 0.15)) {
+                selection = nil
+                ui.viewMode = .gallery
+            }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "house.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.crossoverBlue)
-                    .frame(width: 18)
+            HStack(spacing: 9) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.macportAccent.opacity(0.18))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.macportAccent)
+                }
 
-                Text("Home")
+                Text("Control Center")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Spacer()
+
+                Text("\(store.machines.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.macportInset))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.crossoverCard : Color.clear)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isGallerySelected ? Color.macportCard : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isGallerySelected ? Color.macportAccent.opacity(0.3) : Color.clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Bottle Row
+    // MARK: - Machine Section
 
-    private func bottleRow(_ config: VMConfiguration) -> some View {
+    private func machineSection(title: String, icon: String, color: Color, machines: [VMConfiguration]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.6)
+
+                Spacer()
+
+                Text("\(machines.count)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 4)
+
+            VStack(spacing: 2) {
+                ForEach(machines) { config in
+                    machineRow(config)
+                }
+            }
+        }
+    }
+
+    // MARK: - Machine Row
+
+    private func machineRow(_ config: VMConfiguration) -> some View {
         let isSelected = (selection == config.id)
-        let isHovered = (hoveredBottleId == config.id)
+        let isHovered = (hoveredVMId == config.id)
         let vmState = state.state(for: config.id)
 
         return Button {
-            selection = config.id
+            withAnimation(.easeInOut(duration: 0.12)) {
+                selection = config.id
+                ui.viewMode = .split
+            }
         } label: {
-            HStack(spacing: 8) {
-                // Active state dot / Bottle icon
-                if vmState.isActive {
-                    Circle()
-                        .fill(Color.macportRunning)
-                        .frame(width: 7, height: 7)
-                        .shadow(color: Color.macportRunning.opacity(0.8), radius: 3)
-                } else {
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(isSelected ? Color.crossoverBlue : Color(white: 0.5))
-                        .frame(width: 14)
-                }
+            HStack(spacing: 9) {
+                // OS Avatar Tile
+                GuestAvatar(guest: config.guest, size: 26)
 
-                Text(config.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? .white : Color(white: 0.85))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // Info
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(config.name)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? .primary : .primary.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    HStack(spacing: 4) {
+                        Text("\(config.cpuCount) vCPU")
+                        Text("•")
+                        Text(config.memoryBytes.gbString)
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                }
 
                 Spacer(minLength: 0)
 
-                if vmState.isActive {
-                    Text("RUNNING")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color.macportRunning)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.macportRunning.opacity(0.18)))
-                } else if isHovered {
-                    Menu {
-                        Button("Run Application") {
-                            state.start(config, in: store)
-                        }
-                        Button("Open C: Drive") {
-                            let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
-                            NSWorkspace.shared.open(driveC)
-                        }
-                        Button("Wine Configuration") {
-                            launchWinecfg(config)
-                        }
-                        Button("Rename Bottle…") {
-                            ui.renameTarget = config
-                        }
-                        Button("Uninstall Applications…") {
-                            ui.bottleUninstallTarget = config
-                        }
-                        Divider()
-                        Button("Duplicate Bottle…") {
-                            ui.cloneTarget = config
-                        }
-                        Button("Delete Bottle…", role: .destructive) {
-                            ui.deleteTarget = config
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color(white: 0.6))
-                            .frame(width: 16, height: 16)
+                // Status Indicator
+                HStack(spacing: 5) {
+                    if vmState.isActive {
+                        Circle()
+                            .fill(Color.macportRunning)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: Color.macportRunning.opacity(0.6), radius: 3)
+                    } else if vmState == .paused {
+                        Circle()
+                            .fill(Color.macportPaused)
+                            .frame(width: 8, height: 8)
+                    } else {
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.4), lineWidth: 1)
+                            .frame(width: 7, height: 7)
                     }
-                    .menuStyle(.borderlessButton)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.crossoverCard : (isHovered ? Color(white: 0.16) : Color.clear))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.macportCard : (isHovered ? Color.macportCard.opacity(0.5) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isSelected ? Color.macportAccent.opacity(0.4) : Color.clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            hoveredBottleId = hovering ? config.id : nil
+            hoveredVMId = hovering ? config.id : nil
         }
         .contextMenu {
             if vmState.isActive {
-                Button("Quit All Applications in Bottle", role: .destructive) {
+                Button("Shut Down (Graceful)") {
                     Task { await state.stop(id: config.id, graceful: true) }
                 }
-            } else {
-                Button("Run Application") {
-                    state.start(config, in: store)
-                }
-            }
-
-            Button("Open C: Drive") {
-                let driveC = WineBottleManager.driveCURL(for: store.bundleURL(for: config))
-                NSWorkspace.shared.open(driveC)
-            }
-
-            Button("Wine Configuration (winecfg)") {
-                launchWinecfg(config)
-            }
-
-            Button("Rename Bottle…") {
-                ui.renameTarget = config
-            }
-
-            Button("Uninstall Applications…") {
-                ui.bottleUninstallTarget = config
-            }
-
-            Divider()
-
-            Button("Add to Applications…") {
-                exportBottle(config, to: .applications)
-            }
-
-            Button("Add to Desktop…") {
-                exportBottle(config, to: .desktop)
-            }
-
-            Divider()
-
-            Button("Duplicate Bottle…") {
-                ui.cloneTarget = config
-            }
-
-            Button("Delete Bottle…", role: .destructive) {
-                ui.deleteTarget = config
-            }
-        }
-    }
-
-    private func launchWinecfg(_ config: VMConfiguration) {
-        let bundleURL = store.bundleURL(for: config)
-        Task {
-            let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
-            try? await engine.launchExecutable("winecfg", in: bundleURL, metal: true)
-        }
-    }
-
-    private func exportBottle(_ config: VMConfiguration, to destination: MacportAppPublisher.Destination) {
-        let bundleURL = store.bundleURL(for: config)
-        let shortcuts = WineBottleManager.scanInstalledShortcuts(in: bundleURL)
-        let primary = config.wineSettings?.primaryExecutable
-        let match = shortcuts.first(where: { $0.executable == primary })
-        let targetName = match?.name ?? config.name
-        let exec = primary ?? shortcuts.first?.executable ?? "explorer.exe"
-        let icon = match?.iconURL ?? shortcuts.first?.iconURL
-
-        do {
-            let appURL = try MacportAppPublisher.exportLauncherApp(
-                bottleId: config.id,
-                bottleName: config.name,
-                appName: targetName,
-                executable: exec,
-                iconURL: icon,
-                to: destination
-            )
-            NSWorkspace.shared.activateFileViewerSelecting([appURL])
-        } catch {
-            print("Failed to export bottle: \(error.localizedDescription)")
-        }
-    }
-
-    // MARK: - Hypervisor VM Row
-
-    private func vmRow(_ config: VMConfiguration) -> some View {
-        let isSelected = (selection == config.id)
-        let vmState = state.state(for: config.id)
-
-        return Button {
-            selection = config.id
-        } label: {
-            HStack(spacing: 8) {
-                StateDot(state: vmState)
-
-                Text(config.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? .white : Color(white: 0.85))
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.crossoverCard : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            if vmState.isActive {
-                Button("Shut Down") {
-                    Task { await state.stop(id: config.id, graceful: true) }
-                }
-                Button("Force Off", role: .destructive) {
+                Button("Force Off (Instant)", role: .destructive) {
                     Task { await state.stop(id: config.id, graceful: false) }
+                }
+
+                Divider()
+
+                if vmState == .paused {
+                    Button("Resume") {
+                        Task { await state.resume(id: config.id) }
+                    }
+                } else {
+                    Button("Pause") {
+                        Task { await state.pause(id: config.id) }
+                    }
                 }
             } else {
                 Button("Start Virtual Machine") {
@@ -380,24 +345,32 @@ struct VMLibraryView: View {
 
             Divider()
 
-            Button("Add to Applications…") {
-                exportVM(config, to: .applications)
-            }
-
-            Button("Add to Desktop…") {
-                exportVM(config, to: .desktop)
-            }
-
-            Divider()
-
-            Button("Hardware Settings…") {
-                selection = config.id
+            Button("Machine Settings…") {
+                ui.selection = config.id
                 ui.isPresentingSettings = true
             }
 
             Button("Snapshots…") {
-                selection = config.id
+                ui.selection = config.id
                 ui.isPresentingSnapshots = true
+            }
+
+            Button("Clone Machine…") {
+                ui.cloneTarget = config
+            }
+
+            Button("Rename…") {
+                ui.renameTarget = config
+            }
+
+            Divider()
+
+            Button("Add to Applications") {
+                exportVM(config, to: .applications)
+            }
+
+            Button("Add to Desktop") {
+                exportVM(config, to: .desktop)
             }
 
             Button("Show in Finder") {
@@ -406,64 +379,79 @@ struct VMLibraryView: View {
 
             Divider()
 
-            Button("Rename…") {
-                ui.renameTarget = config
-            }
-
-            Button("Clone Machine…") {
-                ui.cloneTarget = config
-            }
-            .disabled(vmState.isActive)
-
-            Button("Delete Machine…", role: .destructive) {
+            Button("Delete…", role: .destructive) {
                 ui.deleteTarget = config
             }
-            .disabled(state.deleteRefusal(for: config) != nil)
+        }
+    }
+
+    // MARK: - Empty Library Prompt
+
+    private var emptyLibraryPrompt: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 26))
+                .foregroundStyle(.tertiary)
+            Text("No Virtual Machines")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Click '+ New Machine' below to install Windows 11, Linux, or macOS.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Bottom Actions Bar
+
+    private var bottomActionsBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    ui.isPresentingImport = true
+                } label: {
+                    Label("Import", systemImage: "arrow.down.doc")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.small)
+
+                Button {
+                    state.isPresentingCreateSheet = true
+                } label: {
+                    Label("New Machine", systemImage: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            // Host Capacity Mini Pill
+            HStack {
+                Text("\(state.registry.capacity.processorCount) Apple Silicon Cores")
+                Text("•")
+                Text(MacportFormat.bytes(state.registry.capacity.physicalMemory))
+            }
+            .font(.system(size: 9, design: .monospaced))
+            .foregroundStyle(.tertiary)
         }
     }
 
     private func exportVM(_ config: VMConfiguration, to destination: MacportAppPublisher.Destination) {
         do {
-            let appURL = try MacportAppPublisher.exportVMLauncherApp(
-                vmId: config.id,
-                vmName: config.name,
-                guest: config.guest,
+            let appURL = try MacportAppPublisher.exportLauncherApp(
+                bottleId: config.id,
+                bottleName: config.name,
+                appName: config.name,
+                executable: "macport-vm",
+                iconURL: nil,
                 to: destination
             )
             NSWorkspace.shared.activateFileViewerSelecting([appURL])
         } catch {
-            print("Failed to export VM: \(error.localizedDescription)")
+            // Ignored
         }
-    }
-
-    // MARK: - Bottom Install Bar
-
-    private var bottomInstallBar: some View {
-        Button {
-            state.isPresentingCreateSheet = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.crossoverBlue)
-
-                Text("Install Application…")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(white: 0.18))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }

@@ -3,13 +3,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 import MacportKit
 
-/// The signature Parallels Desktop style Installation Assistant.
+/// The signature Parallels Desktop + UTM style Installation Assistant.
 ///
 /// Provides a guided 4-step wizard:
 /// 1. Operating System Selection (Windows 11 on Arm, Linux distros, macOS, Custom Image)
 /// 2. Primary Use Profile (Productivity, Software Development, Gaming & High Performance, Custom)
 /// 3. Configuration & Mac Integration (One-click Desktop/Documents/Downloads folder sharing, media picker, hardware tuning)
-/// 4. Review & Honesty Check (Hardware breakdown, Virtio drivers, TPM 2.0 answer file, engine allocation)
+/// 4. Review & Honesty Check (Hardware breakdown, Virtio drivers, TPM 2.0 status, hypervisor engine allocation)
 @MainActor
 struct VMCreateView: View {
     @EnvironmentObject private var state: AppState
@@ -47,7 +47,6 @@ struct VMCreateView: View {
     // MARK: - Step 1: OS Selection State
 
     enum OSTemplate: String, CaseIterable, Identifiable {
-        case windowsApp = "Windows App (.exe)"
         case windows11 = "Windows 11 (Arm)"
         case ubuntuLinux = "Ubuntu Linux"
         case fedoraLinux = "Fedora Linux"
@@ -59,7 +58,6 @@ struct VMCreateView: View {
 
         var guestKind: GuestKind {
             switch self {
-            case .windowsApp: return .windowsApp
             case .windows11: return .windowsARM
             case .ubuntuLinux, .fedoraLinux, .debianLinux: return .linuxARM
             case .macOS: return .macOSGuest
@@ -69,7 +67,6 @@ struct VMCreateView: View {
 
         var defaultName: String {
             switch self {
-            case .windowsApp: return "Windows App"
             case .windows11: return "Windows 11"
             case .ubuntuLinux: return "Ubuntu 24.04 LTS"
             case .fedoraLinux: return "Fedora 40"
@@ -80,26 +77,8 @@ struct VMCreateView: View {
         }
     }
 
-    enum AssistantMode: String, CaseIterable, Identifiable {
-        case crossoverBottle = "Windows App / Bottle"
-        case hypervisorVM = "Virtual Machine"
-
-        var id: String { rawValue }
-    }
-
-    enum BottleInstallTarget: String, CaseIterable, Identifiable {
-        case newBottle = "New Bottle"
-        case existingBottle = "Existing Bottle"
-
-        var id: String { rawValue }
-    }
-
-    @State private var assistantMode: AssistantMode = .crossoverBottle
-    @State private var bottleTarget: BottleInstallTarget = .newBottle
-    @State private var selectedExistingBottleId: UUID? = nil
-    @State private var emptyBottleOnly: Bool = false
-    @State private var selectedOS: OSTemplate = .windowsApp
-    @State private var name: String = "New Bottle"
+    @State private var selectedOS: OSTemplate = .windows11
+    @State private var name: String = "Windows 11"
     @State private var installMediaPath: String?
 
     // MARK: - Step 2: Use Profile State
@@ -121,32 +100,21 @@ struct VMCreateView: View {
             }
         }
 
-        var subtitle: String {
+        var description: String {
             switch self {
             case .productivity:
-                return "Optimized for Microsoft Office, Safari/Chrome, email, and everyday apps."
+                return "Optimized for office applications, web browsing, email, and multitasking."
             case .softwareDev:
-                return "Tuned for Visual Studio, Docker, Xcode, compilers, and high I/O throughput."
+                return "Optimized for programming, code compilation, Docker containers, and database workloads."
             case .performance:
-                return "Maximum processor cores, memory allocation, and accelerated graphics."
+                return "Maximum allocation of CPU cores and RAM for demanding 3D graphics, simulations, and games."
             case .custom:
-                return "Manually configure virtual processors, memory limits, and engine pinning."
+                return "Manually configure exact vCPU count, memory allocation, and storage capacities."
             }
         }
     }
 
     @State private var selectedProfile: UsageProfile = .productivity
-
-    // MARK: - Wine / CrossOver Bottle State
-
-    @State private var selectedBottleTemplate: String = "win11_64"
-    @State private var selectedCrossOverBottle: String = ""
-    @State private var isLinkingExistingBottle: Bool = false
-    @State private var selectedGraphicsBackend: GraphicsBackend = .auto
-    @State private var msyncEnabled: Bool = true
-    @State private var metalFXEnabled: Bool = true
-    @State private var hudEnabled: Bool = false
-    @State private var existingCrossOverBottles: [(name: String, url: URL)] = []
 
     // MARK: - Step 3: Hardware & Sharing State
 
@@ -178,25 +146,6 @@ struct VMCreateView: View {
     }
 
     var body: some View {
-        Group {
-            if assistantMode == .crossoverBottle {
-                crossoverInstallView
-            } else {
-                hypervisorWizardView
-            }
-        }
-        .onAppear {
-            applyProfileDefaults()
-            existingCrossOverBottles = WineRuntime.existingCrossOverBottles()
-            if let firstBottle = store.machines.first(where: { $0.guest == .windowsApp }) {
-                selectedExistingBottleId = firstBottle.id
-            }
-        }
-    }
-
-    // MARK: - Hypervisor Wizard Container
-
-    private var hypervisorWizardView: some View {
         VStack(spacing: 0) {
             assistantHeader
             Divider()
@@ -223,359 +172,20 @@ struct VMCreateView: View {
         }
         .frame(width: 760, height: 620)
         .background(Color.macportWindow)
-    }
-
-    // MARK: - CrossOver-Style Bottle Install View
-
-    private var crossoverInstallView: some View {
-        VStack(spacing: 0) {
-            crossoverHeader
-            Divider().background(Color.crossoverBorder)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    // Card 1: Select Installer
-                    installerSelectionCard
-
-                    // Card 2: Bottle Environment Configuration
-                    bottleEnvironmentCard
-
-                    // Card 3: Graphics & Performance Settings
-                    graphicsSettingsCard
-                }
-                .padding(22)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider().background(Color.crossoverBorder)
-            crossoverFooter
-        }
-        .frame(width: 720, height: 620)
-        .background(Color.crossoverCanvas)
-    }
-
-    private var crossoverHeader: some View {
-        HStack(spacing: 14) {
-            MacportAppLogoView(size: 38)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Install Windows Application")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("CrossOver-grade Apple Metal GPU acceleration via Wine & Apple GPTK")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.crossoverTextSecondary)
-            }
-
-            Spacer()
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    assistantMode = .hypervisorVM
-                    selectedOS = .windows11
-                    name = "Windows 11"
-                    currentStep = .osChoice
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: 11))
-                    Text("Virtual Machine Wizard…")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(Color.crossoverBlue)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.crossoverCard))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.crossoverBorder, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
-        .background(Color.crossoverSidebar)
-    }
-
-    private var installerSelectionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("1. SELECT INSTALLER")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color(white: 0.5))
-                    .tracking(0.5)
-
-                Spacer()
-
-                Toggle("Create empty bottle only", isOn: $emptyBottleOnly)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.crossoverTextSecondary)
-                    .toggleStyle(.checkbox)
-            }
-
-            if !emptyBottleOnly {
-                installMediaDropZone
-            }
-        }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
-    }
-
-    private var bottleEnvironmentCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("2. BOTTLE ENVIRONMENT")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color(white: 0.5))
-                .tracking(0.5)
-
-            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
-            if !existingBottles.isEmpty {
-                Picker("", selection: $bottleTarget) {
-                    Text("Create New Bottle").tag(BottleInstallTarget.newBottle)
-                    Text("Install into Existing Bottle").tag(BottleInstallTarget.existingBottle)
-                }
-                .pickerStyle(.segmented)
-                .padding(.bottom, 2)
-            }
-
-            if bottleTarget == .newBottle {
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Bottle Name")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
-
-                        TextField("e.g. Genshin Impact, Steam, Office", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
-                    }
-
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Windows Bottle Template")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white)
-                            Text("DirectX 11/12 64-bit environment")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color(white: 0.5))
-                        }
-                        Spacer()
-                        Picker("", selection: $selectedBottleTemplate) {
-                            Text("Windows 11 64-bit (win11_64) — Recommended").tag("win11_64")
-                            Text("Windows 10 64-bit (win10_64)").tag("win10_64")
-                            Text("Windows 7 64-bit (win7_64)").tag("win7_64")
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Select Destination Bottle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
-
-                    Picker("", selection: Binding(
-                        get: { selectedExistingBottleId ?? existingBottles.first?.id },
-                        set: { selectedExistingBottleId = $0 }
-                    )) {
-                        ForEach(existingBottles) { b in
-                            Text(b.name).tag(Optional(b.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-            }
-        }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
-    }
-
-    private var graphicsSettingsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("3. GAMING & GRAPHICS ACCELERATION")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color(white: 0.5))
-                .tracking(0.5)
-
-            VStack(spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Graphics Translation Backend")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                        Text("D3DMetal (Apple Game Porting Toolkit), DXMT, or DXVK")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color(white: 0.5))
-                    }
-                    Spacer()
-                    Picker("", selection: $selectedGraphicsBackend) {
-                        ForEach(GraphicsBackend.allCases) { b in
-                            Text(b.displayName).tag(b)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-
-                Divider().background(Color.white.opacity(0.06))
-
-                Toggle(isOn: $msyncEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("MSync (High-Performance Mutex Synchronization)")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                        Text("Reduces thread contention and maximizes frame rates on Apple Silicon")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color(white: 0.5))
-                    }
-                }
-                .toggleStyle(.switch)
-                .tint(Color.crossoverBlue)
-                .controlSize(.small)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-
-                Divider().background(Color.white.opacity(0.06))
-
-                Toggle(isOn: $metalFXEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Apple MetalFX AI Upscaling")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                        Text("Translates DLSS calls to Apple MetalFX temporal / spatial upscaling")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color(white: 0.5))
-                    }
-                }
-                .toggleStyle(.switch)
-                .tint(Color.crossoverBlue)
-                .controlSize(.small)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-
-                Divider().background(Color.white.opacity(0.06))
-
-                Toggle(isOn: $hudEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Metal Performance HUD")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                        Text("Overlays real-time frame rates, frame times, and GPU metrics")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color(white: 0.5))
-                    }
-                }
-                .toggleStyle(.switch)
-                .tint(Color.crossoverBlue)
-                .controlSize(.small)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-            }
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.crossoverSidebar))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
-        }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.crossoverCard))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.crossoverBorder, lineWidth: 1))
-    }
-
-    private var crossoverFooter: some View {
-        HStack {
-            Button("Cancel") {
-                dismiss()
-            }
-            .keyboardShortcut(.cancelAction)
-
-            Spacer()
-
-            Button {
-                performCrossoverInstall()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: (installMediaPath != nil && !emptyBottleOnly) ? "arrow.down.circle.fill" : "plus.circle.fill")
-                        .font(.system(size: 12, weight: .bold))
-                    Text(crossoverInstallButtonTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isCrossoverInstallDisabled ? Color(white: 0.25) : Color.crossoverBlue)
-                )
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.defaultAction)
-            .disabled(isCrossoverInstallDisabled)
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
-        .background(Color.crossoverSidebar)
-    }
-
-    private var crossoverInstallButtonTitle: String {
-        if bottleTarget == .existingBottle {
-            return "Install into Selected Bottle"
-        } else if installMediaPath != nil && !emptyBottleOnly {
-            return "Install Application"
-        } else {
-            return "Create Bottle"
+        .onAppear {
+            applyProfileDefaults()
         }
     }
 
-    private var isCrossoverInstallDisabled: Bool {
-        if bottleTarget == .newBottle {
-            return name.trimmingCharacters(in: .whitespaces).isEmpty
-        } else {
-            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
-            return existingBottles.isEmpty || (installMediaPath == nil && !emptyBottleOnly)
-        }
-    }
-
-    private func performCrossoverInstall() {
-        if bottleTarget == .existingBottle {
-            let existingBottles = store.machines.filter { $0.guest == .windowsApp }
-            guard let targetBottle = existingBottles.first(where: { $0.id == (selectedExistingBottleId ?? existingBottles.first?.id) }) else { return }
-            if let media = installMediaPath {
-                let bundleURL = store.bundleURL(for: targetBottle)
-                Task {
-                    let engine = (state.instance(for: targetBottle.id)?.engine as? WineEngine) ?? WineEngine()
-                    try? await engine.launchExecutable(media, in: bundleURL, metal: true)
-                }
-            }
-            ui.selection = targetBottle.id
-            dismiss()
-        } else {
-            selectedOS = .windowsApp
-            let config = makeConfiguration()
-            if installMediaPath != nil && !emptyBottleOnly && onCreateAndStart != nil {
-                onCreateAndStart?(config)
-            } else {
-                onCreate(config)
-            }
-            dismiss()
-        }
-    }
-
-    // MARK: - Header & Step Indicator
+    // MARK: - Header with Step Progress
 
     private var assistantHeader: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.macportAccent.opacity(0.12))
-                    .frame(width: 40, height: 40)
-                Image(systemName: "plus.square.dashed")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Color.macportAccent)
-            }
+        HStack(spacing: 14) {
+            MacportAppLogoView(size: 34)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Installation Assistant")
-                    .font(.system(size: 16, weight: .bold))
+                Text("New Virtual Machine Assistant")
+                    .font(.system(size: 14, weight: .bold))
                 Text(currentStep.title)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -621,26 +231,15 @@ struct VMCreateView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                // Windows App (.exe) Card
-                osTile(
-                    template: .windowsApp,
-                    title: "Windows App (.exe)",
-                    badge: "Zero Overhead",
-                    badgeColor: .cyan,
-                    icon: "macwindow",
-                    accentGradient: [Color.cyan, Color.blue],
-                    description: "Run Windows software, games, and installers directly on macOS at native speed without VM memory overhead."
-                )
-
                 // Windows 11 Card
                 osTile(
                     template: .windows11,
                     title: "Windows 11 on Arm",
-                    badge: "Full Virtual Machine",
+                    badge: "Parallels Fast Install",
                     badgeColor: .blue,
                     icon: "square.grid.2x2.fill",
                     accentGradient: [Color.blue, Color.cyan],
-                    description: "High-performance Windows on Apple Silicon. Auto-configured with TPM 2.0 bypass and Virtio drivers."
+                    description: "High-performance Windows on Apple Silicon. Auto-configured with TPM 2.0 device and VirtIO drivers."
                 )
 
                 // Ubuntu Linux Card
@@ -662,14 +261,14 @@ struct VMCreateView: View {
                     badgeColor: .gray,
                     icon: "apple.logo",
                     accentGradient: [Color.gray, Color.secondary],
-                    description: "Run macOS Sonoma or Sequoia in an isolated virtual sandbox using an IPSW restore image."
+                    description: "Run macOS Sonoma, Sequoia, or newer in an isolated virtual sandbox using an IPSW restore image."
                 )
 
                 // Custom Image Card
                 osTile(
                     template: .customImage,
                     title: "Install from Image File",
-                    badge: "ISO / IMG",
+                    badge: "ISO / IMG / QCOW2",
                     badgeColor: .purple,
                     icon: "opticaldisc.fill",
                     accentGradient: [Color.purple, Color.indigo],
@@ -677,53 +276,23 @@ struct VMCreateView: View {
                 )
             }
 
-            if selectedOS == .windowsApp {
-                HStack(spacing: 10) {
-                    Image(systemName: "bolt.fill")
-                        .foregroundStyle(Color.macportAccent)
-                        .font(.title3)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Wine Translation Engine (Direct Execution)")
-                            .font(.system(size: 12, weight: .semibold))
-                        switch WineRuntime.resolve() {
-                        case .success(let loc):
-                            Text("Ready: \(loc.hasMetalAcceleration ? "Apple Metal GPU acceleration & Rosetta 2 active." : "Rosetta 2 translation active.") Runs directly on macOS as native processes.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        case .failure(let err):
-                            Text(err.localizedDescription)
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color.macportPaused)
-                        }
+            // Distro Selection when Linux is chosen
+            if selectedOS == .ubuntuLinux || selectedOS == .fedoraLinux || selectedOS == .debianLinux {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Choose Linux Distribution")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Picker("", selection: $selectedOS) {
+                        Text("Ubuntu 24.04 LTS").tag(OSTemplate.ubuntuLinux)
+                        Text("Fedora 40").tag(OSTemplate.fedoraLinux)
+                        Text("Debian 12").tag(OSTemplate.debianLinux)
                     }
-                    Spacer()
+                    .pickerStyle(.segmented)
                 }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
-            } else if selectedOS == .windows11 {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .foregroundStyle(Color.macportRunning)
-                        .font(.title3)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Macport Tools (Windows Virtio Drivers)")
-                            .font(.system(size: 12, weight: .semibold))
-                        if MacportTools.resolve() != nil {
-                            Text("virtio-win.iso is staged in Macport Runtime. Network and display drivers will be automatically installed.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("virtio-win.iso will be attached once placed in the Runtime Tools directory.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color.macportPaused)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.macportInset))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.macportBorderSubtle, lineWidth: 1))
             }
         }
     }
@@ -738,9 +307,8 @@ struct VMCreateView: View {
         description: String
     ) -> some View {
         let isSelected = selectedOS == template
-
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(.easeInOut(duration: 0.16)) {
                 selectedOS = template
                 name = template.defaultName
                 applyProfileDefaults()
@@ -749,25 +317,25 @@ struct VMCreateView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     ZStack {
-                        Circle()
-                            .fill(LinearGradient(colors: accentGradient, startPoint: .topLeading, endPoint: .bottomTrailing).opacity(0.2))
-                            .frame(width: 44, height: 44)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(LinearGradient(colors: accentGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 36, height: 36)
                         Image(systemName: icon)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(accentGradient.first ?? .blue)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
                     }
 
                     Spacer()
 
                     Text(badge)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(badgeColor)
-                        .padding(.horizontal, 7)
+                        .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(badgeColor.opacity(0.12)))
+                        .background(Capsule().fill(badgeColor.opacity(0.14)))
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.primary)
@@ -776,68 +344,87 @@ struct VMCreateView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
+
+                HStack {
+                    Spacer()
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(isSelected ? Color.macportAccent : Color.macportOff.opacity(0.4))
+                }
             }
             .padding(14)
-            .frame(height: 140)
+            .frame(height: 155)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(isSelected ? Color.macportAccent : Color.macportBorderSubtle, lineWidth: isSelected ? 2 : 1)
             )
-            .shadow(color: isSelected ? Color.macportAccent.opacity(0.15) : Color.clear, radius: 8, x: 0, y: 2)
+            .shadow(color: isSelected ? Color.macportAccent.opacity(0.15) : Color.black.opacity(0.04), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Step 2: Primary Use Profile View
+    // MARK: - Step 2: Use Profile View (Parallels Style)
 
     private var stepProfileView: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("How will you primarily use this machine?")
+                Text("How will you primarily use \(selectedOS.defaultName)?")
                     .font(.title3.weight(.bold))
-                Text("Macport automatically tailors processor count, memory allocation, and folder sharing for optimal performance.")
+                Text("Macport will tune virtual CPU cores, RAM, and graphics resources for your workflow.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 12) {
                 ForEach(UsageProfile.allCases) { profile in
-                    profileRow(profile: profile)
+                    profileTile(profile)
                 }
             }
         }
     }
 
-    private func profileRow(profile: UsageProfile) -> some View {
+    private func profileTile(_ profile: UsageProfile) -> some View {
         let isSelected = selectedProfile == profile
-
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(.easeInOut(duration: 0.16)) {
                 selectedProfile = profile
                 applyProfileDefaults()
             }
         } label: {
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 ZStack {
                     Circle()
-                        .fill(isSelected ? Color.macportAccent : Color.macportInset)
-                        .frame(width: 42, height: 42)
+                        .fill(isSelected ? Color.macportAccent.opacity(0.18) : Color.macportInset)
+                        .frame(width: 44, height: 44)
                     Image(systemName: profile.icon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(isSelected ? .white : .primary)
+                        .font(.system(size: 20))
+                        .foregroundStyle(isSelected ? Color.macportAccent : .secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(profile.rawValue)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(profile.subtitle)
-                        .font(.system(size: 12))
+                    HStack {
+                        Text(profile.rawValue)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.primary)
+
+                        if profile == .productivity {
+                            Text("RECOMMENDED")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.macportAccent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.macportAccent.opacity(0.12)))
+                        }
+                    }
+
+                    Text(profile.description)
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -849,13 +436,33 @@ struct VMCreateView: View {
                     .foregroundStyle(isSelected ? Color.macportAccent : Color.macportOff.opacity(0.4))
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.macportCard))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(isSelected ? Color.macportAccent : Color.macportBorderSubtle, lineWidth: isSelected ? 2 : 1)
             )
+            .shadow(color: isSelected ? Color.macportAccent.opacity(0.12) : Color.black.opacity(0.04), radius: 5, y: 2)
         }
         .buttonStyle(.plain)
+    }
+
+    private func applyProfileDefaults() {
+        switch selectedProfile {
+        case .productivity:
+            cpuCount = min(4, maxHostCPUs)
+            memoryGB = min(8, maxHostMemoryGB)
+            diskGB = 64
+        case .softwareDev:
+            cpuCount = min(max(4, maxHostCPUs - 2), maxHostCPUs)
+            memoryGB = min(max(8, maxHostMemoryGB / 2), maxHostMemoryGB)
+            diskGB = 96
+        case .performance:
+            cpuCount = max(1, maxHostCPUs - 1)
+            memoryGB = max(2, (maxHostMemoryGB * 3) / 4)
+            diskGB = 128
+        case .custom:
+            break
+        }
     }
 
     // MARK: - Step 3: Configuration & Mac Integration View
@@ -863,259 +470,165 @@ struct VMCreateView: View {
     private var stepConfigurationView: some View {
         VStack(alignment: .leading, spacing: 20) {
             // General Info
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Virtual Machine Identity")
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Virtual Machine Name")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
                 TextField("Machine Name", text: $name)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 13))
             }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
 
-            // Install Media Picker / Drop Zone
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Installation Media")
-                    .font(.headline)
-
-                installMediaDropZone
-            }
-
-            // Mac Folder Sharing Integration (Parallels Style)
-            VStack(alignment: .leading, spacing: 10) {
+            // Boot Media Card
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Image(systemName: "folder.badge.gearshape")
+                    Image(systemName: "opticaldisc.fill")
                         .foregroundStyle(Color.macportAccent)
-                    Text("Mac Folder Sharing")
+                    Text("Installation Media / Image")
                         .font(.headline)
                     Spacer()
-                    Toggle("Allow Guest to Write (Read-Write)", isOn: Binding(
-                        get: { !shareReadOnly },
-                        set: { shareReadOnly = !$0 }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
                 }
 
-                Text("Seamlessly access your Mac folders inside the virtual machine.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 8) {
-                    HStack(spacing: 12) {
-                        folderPresetCheckbox(title: "Desktop", path: "~/Desktop", isOn: $shareDesktop)
-                        folderPresetCheckbox(title: "Documents", path: "~/Documents", isOn: $shareDocuments)
-                        folderPresetCheckbox(title: "Downloads", path: "~/Downloads", isOn: $shareDownloads)
-                    }
-
-                    if !customSharedFolders.isEmpty {
-                        ForEach(customSharedFolders, id: \.self) { folder in
-                            HStack {
-                                Image(systemName: "folder.fill")
-                                    .foregroundStyle(Color.macportAccent)
-                                Text(folder)
-                                    .font(.system(size: 11, design: .monospaced))
-                                Spacer()
-                                Button {
-                                    customSharedFolders.removeAll { $0 == folder }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.macportInset))
-                        }
-                    }
-
-                    Button("+ Add Custom Mac Folder…") {
-                        chooseCustomFolder()
-                    }
-                    .controlSize(.small)
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                bootMediaSection
             }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
 
-            if selectedOS == .windowsApp {
-                // CrossOver Bottle Architecture & Gaming Settings
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: "gamecontroller.fill")
-                            .foregroundStyle(Color.macportAccent)
-                        Text("CrossOver Bottle Architecture & Gaming Settings")
-                            .font(.headline)
-                    }
-
-                    if !existingCrossOverBottles.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Bottle Origin")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            Picker("", selection: $isLinkingExistingBottle) {
-                                Text("Create New Clean Bottle").tag(false)
-                                Text("Link Existing CrossOver Bottle").tag(true)
-                            }
-                            .pickerStyle(.segmented)
-
-                            if isLinkingExistingBottle {
-                                Picker("Select CrossOver Bottle", selection: $selectedCrossOverBottle) {
-                                    Text("Choose a Bottle…").tag("")
-                                    ForEach(existingCrossOverBottles, id: \.name) { b in
-                                        Text(b.name).tag(b.name)
-                                    }
-                                }
-                                .onChange(of: selectedCrossOverBottle) { _, newBottle in
-                                    if !newBottle.isEmpty {
-                                        name = newBottle
-                                    }
-                                }
-                            }
-                        }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                    }
-
-                    if !isLinkingExistingBottle {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Windows Bottle Template")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            Picker("", selection: $selectedBottleTemplate) {
-                                Text("Windows 11 64-bit (win11_64) — Recommended for D3DMetal / GPTK").tag("win11_64")
-                                Text("Windows 10 64-bit (win10_64)").tag("win10_64")
-                                Text("Windows 7 64-bit (win7_64)").tag("win7_64")
-                            }
-                            .pickerStyle(.menu)
-                        }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                    }
-
-                    // Graphics Backend & Synchronization
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Graphics Backend")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Picker("", selection: $selectedGraphicsBackend) {
-                                ForEach(GraphicsBackend.allCases) { b in
-                                    Text(b.displayName).tag(b)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-
-                        Divider()
-
-                        Toggle("MSync (High-Performance Mutex Synchronization)", isOn: $msyncEnabled)
-                            .font(.system(size: 12))
-
-                        Toggle("Apple MetalFX Temporal / Spatial Upscaling", isOn: $metalFXEnabled)
-                            .font(.system(size: 12))
-
-                        Toggle("Metal Performance HUD (FPS / Frame-Time Counter)", isOn: $hudEnabled)
-                            .font(.system(size: 12))
-                    }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
-                }
-            } else {
-                // Fine-tuning Hardware
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Hardware Allocation")
+            // Hardware Specification Card
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Image(systemName: "cpu")
+                        .foregroundStyle(Color.macportAccent)
+                    Text("Hardware Resources")
                         .font(.headline)
-
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Processors")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Stepper("\(cpuCount) vCPUs", value: $cpuCount, in: 1...maxHostCPUs)
-                                .font(.system(size: 12, design: .monospaced))
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Memory (RAM)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Stepper("\(memoryGB) GB", value: $memoryGB, in: 2...maxHostMemoryGB)
-                                .font(.system(size: 12, design: .monospaced))
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Storage (NVMe)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Stepper("\(diskGB) GB", value: $diskGB, in: 16...1024, step: 16)
-                                .font(.system(size: 12, design: .monospaced))
-                        }
-                    }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.macportInset))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.macportBorderSubtle, lineWidth: 1))
+                    Spacer()
                 }
-            }
-        }
-    }
 
-    private func folderPresetCheckbox(title: String, path: String, isOn: Binding<Bool>) -> some View {
-        Button {
-            isOn.wrappedValue.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isOn.wrappedValue ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(isOn.wrappedValue ? Color.macportAccent : Color.macportOff.opacity(0.5))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(path)
-                        .font(.system(size: 9))
+                // CPUs
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Processors (vCPUs)")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text("\(cpuCount) cores")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    }
+                    Slider(
+                        value: Binding(get: { Double(cpuCount) }, set: { cpuCount = Int($0) }),
+                        in: 1...Double(maxHostCPUs),
+                        step: 1
+                    )
+                    Text("Host has \(host.processorCount) physical Apple Silicon cores available.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                // Memory
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Memory (RAM)")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text("\(memoryGB) GB")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    }
+                    Slider(
+                        value: Binding(get: { Double(memoryGB) }, set: { memoryGB = Int($0) }),
+                        in: 2...Double(maxHostMemoryGB),
+                        step: 1
+                    )
+                    Text("Host has \(MacportFormat.bytes(host.physicalMemory)) physical memory.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                // Disk Size
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("NVMe Virtual Storage")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text("\(diskGB) GB")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    }
+                    Slider(
+                        value: Binding(get: { Double(diskGB) }, set: { diskGB = Int($0) }),
+                        in: 32...512,
+                        step: 16
+                    )
+                    Text("Disks are created as sparse images and only consume real space as the guest writes data.")
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.macportCard))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(isOn.wrappedValue ? Color.macportAccent.opacity(0.5) : Color.macportBorderSubtle, lineWidth: 1))
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
+
+            // Mac Folder Sharing Card
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(Color.macportAccent)
+                    Text("Mac Folder Sharing (VirtioFS)")
+                        .font(.headline)
+                    Spacer()
+                }
+
+                Text("Access your Mac files seamlessly inside the virtual machine at native storage speeds.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 16) {
+                    Toggle("Desktop", isOn: $shareDesktop)
+                    Toggle("Documents", isOn: $shareDocuments)
+                    Toggle("Downloads", isOn: $shareDownloads)
+                }
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+
+                Toggle("Mount shares as Read-Only for safety", isOn: $shareReadOnly)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.macportCard))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.macportBorderSubtle, lineWidth: 1))
         }
-        .buttonStyle(.plain)
     }
 
-    private var installMediaDropZone: some View {
-        VStack(spacing: 10) {
-            if let mediaPath = installMediaPath {
-                HStack(spacing: 12) {
-                    Image(systemName: "opticaldisc.fill")
-                        .font(.title2)
+    private var bootMediaSection: some View {
+        Group {
+            if let path = installMediaPath {
+                HStack(spacing: 10) {
+                    Image(systemName: "doc.fill")
                         .foregroundStyle(Color.macportAccent)
-
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(URL(fileURLWithPath: mediaPath).lastPathComponent)
+                        Text(URL(fileURLWithPath: path).lastPathComponent)
                             .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
-                        Text(mediaPath)
-                            .font(.system(size: 10, design: .monospaced))
+                        Text(path)
+                            .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .truncationMode(.middle)
                     }
-
                     Spacer()
-
                     Button("Change…") { chooseMedia() }
                         .controlSize(.small)
-
                     Button {
                         installMediaPath = nil
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1128,14 +641,14 @@ struct VMCreateView: View {
                         .font(.system(size: 24))
                         .foregroundStyle(isTargetedForDrop ? Color.macportAccent : .secondary)
 
-                    Text(selectedOS == .macOS ? "Choose an IPSW restore image or drag it here" : (selectedOS == .windowsApp ? "Choose a Windows executable (.exe, .msi) or drag it here" : "Choose an ISO or disk image or drag it here"))
+                    Text(selectedOS == .macOS ? "Choose an IPSW restore image or drag it here" : "Choose an ISO or disk image or drag it here")
                         .font(.system(size: 12, weight: .medium))
 
                     HStack(spacing: 10) {
-                        Button(selectedOS == .windowsApp ? "Choose Executable…" : "Choose Image…") { chooseMedia() }
+                        Button("Choose Image…") { chooseMedia() }
                             .controlSize(.small)
 
-                        Text(selectedOS == .windowsApp ? "or leave empty to open Windows Desktop" : "or leave empty to boot existing drive")
+                        Text("or leave empty to boot from existing drive")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -1155,9 +668,6 @@ struct VMCreateView: View {
                 if let url = url {
                     Task { @MainActor in
                         installMediaPath = url.path
-                        if selectedOS == .windowsApp, (name == "Windows App" || name.isEmpty) {
-                            name = url.deletingPathExtension().lastPathComponent
-                        }
                     }
                 }
             }
@@ -1170,9 +680,9 @@ struct VMCreateView: View {
     private var stepReviewView: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Ready to Create Virtual Machine")
+                Text("Ready to create \(name)")
                     .font(.title3.weight(.bold))
-                Text("Confirm specifications and host integration.")
+                Text("Confirm specifications and hypervisor resources before creating.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -1198,22 +708,21 @@ struct VMCreateView: View {
                 VStack(spacing: 10) {
                     reviewRow(label: "Virtual Processors", value: "\(cpuCount) Cores")
                     reviewRow(label: "Memory (RAM)", value: "\(memoryGB) GB")
-                    reviewRow(label: "Primary NVMe Storage", value: "\(diskGB) GB (Sparse Ceil)")
+                    reviewRow(label: "Primary NVMe Storage", value: "\(diskGB) GB (Sparse)")
                     reviewRow(label: "Network Mode", value: network.displayName)
 
                     let folderCount = resolvedSharedFolders().count
                     reviewRow(label: "Shared Mac Folders", value: folderCount > 0 ? "\(folderCount) folder(s) (\(shareReadOnly ? "Read-Only" : "Read-Write"))" : "None")
 
                     if let mediaPath = installMediaPath {
-                        reviewRow(label: "Install Media", value: URL(fileURLWithPath: mediaPath).lastPathComponent)
+                        reviewRow(label: "Boot Media", value: URL(fileURLWithPath: mediaPath).lastPathComponent)
                     }
 
-                    if selectedOS.guestKind == .windowsApp {
-                        reviewRow(label: "Execution Engine", value: "Wine Translation Layer (Metal / Rosetta 2)")
-                        reviewRow(label: "Target Executable", value: installMediaPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Windows Explorer (explorer.exe)")
-                        reviewRow(label: "Memory Overhead", value: "0 MB (Dynamic Host Processes)")
-                    } else if selectedOS.guestKind == .windowsARM {
-                        reviewRow(label: "Macport Tools", value: MacportTools.resolve() != nil ? "virtio-win.iso auto-attached" : "Missing virtio-win.iso")
+                    if selectedOS.guestKind == .windowsARM {
+                        reviewRow(label: "TPM 2.0 Security", value: "Emulated TPM 2.0 Device Active")
+                        reviewRow(label: "Macport Tools", value: MacportTools.resolve() != nil ? "virtio-win.iso auto-attached" : "Optional virtio-win.iso")
+                    } else if selectedOS.guestKind == .macOSGuest {
+                        reviewRow(label: "Virtualization Mode", value: "Apple Virtualization Framework (Native GPU)")
                     }
                 }
                 .padding(16)
@@ -1225,7 +734,7 @@ struct VMCreateView: View {
             let warnings = capabilityWarnings
             if !warnings.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("What to expect")
+                    Text("Hypervisor Notes & Host Check")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
 
@@ -1267,17 +776,6 @@ struct VMCreateView: View {
                 dismiss()
             }
             .keyboardShortcut(.cancelAction)
-
-            Button("◀ Windows App / Bottle") {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    assistantMode = .crossoverBottle
-                    selectedOS = .windowsApp
-                    name = "New Bottle"
-                }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.crossoverBlue)
-            .padding(.leading, 8)
 
             Spacer()
 
@@ -1325,78 +823,26 @@ struct VMCreateView: View {
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.regular)
                 }
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .background(Color.macportCard.opacity(0.8))
+        .background(Color.macportCard.opacity(0.7))
     }
 
-    // MARK: - Logic & Defaults
-
-    private func applyProfileDefaults() {
-        let hostCores = maxHostCPUs
-        let hostRAM = maxHostMemoryGB
-
-        if selectedOS == .windowsApp {
-            cpuCount = min(4, hostCores)
-            memoryGB = 4
-            diskGB = 32
-            shareDesktop = true
-            shareDocuments = true
-            shareDownloads = true
-            return
-        }
-
-        // On an 8 GB host (usable = 6 GB), calibrate defaults so machines fit host admission limits
-        let defaultMem: Int
-        if hostRAM <= 6 {
-            defaultMem = selectedOS.guestKind == .windowsARM ? 4 : 2
-        } else {
-            defaultMem = min(8, hostRAM - 2)
-        }
-
-        switch selectedProfile {
-        case .productivity:
-            cpuCount = min(4, hostCores)
-            memoryGB = defaultMem
-            diskGB = 64
-            shareDesktop = true
-            shareDocuments = true
-            shareDownloads = true
-        case .softwareDev:
-            cpuCount = max(2, min(hostCores - 1, 8))
-            memoryGB = min(max(defaultMem, 4), hostRAM > 4 ? hostRAM - 2 : hostRAM)
-            diskGB = 128
-            shareDesktop = true
-            shareDocuments = true
-            shareDownloads = true
-        case .performance:
-            cpuCount = max(2, hostCores - 1)
-            memoryGB = min(max(defaultMem + 1, 4), hostRAM)
-            diskGB = 128
-            shareDesktop = true
-            shareDocuments = true
-            shareDownloads = true
-        case .custom:
-            break
-        }
-    }
+    // MARK: - Helpers
 
     private func resolvedSharedFolders() -> [SharedFolder] {
         var folders: [SharedFolder] = []
-        let fm = FileManager.default
-
-        if shareDesktop, let url = fm.urls(for: .desktopDirectory, in: .userDomainMask).first {
+        if shareDesktop, let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
             folders.append(SharedFolder(hostPath: url.path, readOnly: shareReadOnly))
         }
-        if shareDocuments, let url = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+        if shareDocuments, let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             folders.append(SharedFolder(hostPath: url.path, readOnly: shareReadOnly))
         }
-        if shareDownloads, let url = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+        if shareDownloads, let url = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
             folders.append(SharedFolder(hostPath: url.path, readOnly: shareReadOnly))
         }
         for custom in customSharedFolders {
@@ -1408,21 +854,9 @@ struct VMCreateView: View {
     }
 
     private func makeConfiguration() -> VMConfiguration {
-        let isWindowsBottle = (assistantMode == .crossoverBottle || selectedOS == .windowsApp)
-        let guestKind: GuestKind = isWindowsBottle ? .windowsApp : selectedOS.guestKind
-        let boot: BootSource = (!emptyBottleOnly && installMediaPath != nil) ? .installMedia(path: installMediaPath!) : .diskOnly
-        var wineSettings: WineBottleSettings? = nil
-        if guestKind == .windowsApp {
-            wineSettings = WineBottleSettings(
-                backend: selectedGraphicsBackend,
-                msyncEnabled: msyncEnabled,
-                metalFXEnabled: metalFXEnabled,
-                hudEnabled: hudEnabled,
-                bottleTemplate: selectedBottleTemplate,
-                linkedCrossOverBottle: isLinkingExistingBottle && !selectedCrossOverBottle.isEmpty ? selectedCrossOverBottle : nil
-            )
-        }
-        let finalName = name.trimmingCharacters(in: .whitespaces).isEmpty ? (isWindowsBottle ? "New Bottle" : "Untitled VM") : name
+        let guestKind: GuestKind = selectedOS.guestKind
+        let boot: BootSource = installMediaPath != nil ? .installMedia(path: installMediaPath!) : .diskOnly
+        let finalName = name.trimmingCharacters(in: .whitespaces).isEmpty ? selectedOS.defaultName : name
         return VMConfiguration(
             name: finalName,
             guest: guestKind,
@@ -1434,7 +868,7 @@ struct VMCreateView: View {
             boot: boot,
             tpmEnabled: guestKind.requiresTPM,
             engineIdentifier: engineChoice == VMConfiguration.automaticEngine ? nil : engineChoice,
-            wineSettings: wineSettings
+            wineSettings: nil
         )
     }
 
@@ -1449,31 +883,9 @@ struct VMCreateView: View {
         panel.allowsOtherFileTypes = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        let isWine = (assistantMode == .crossoverBottle || selectedOS == .windowsApp)
-        panel.message = isWine
-            ? "Choose a Windows executable (.exe, .msi, or installer) to run"
-            : (selectedOS == .macOS ? "Choose an IPSW restore image" : "Choose an ISO or disk image to boot")
+        panel.message = selectedOS == .macOS ? "Choose an IPSW restore image" : "Choose an ISO or disk image to boot"
         if panel.runModal() == .OK {
             installMediaPath = panel.url?.path
-            if isWine, let filename = panel.url?.deletingPathExtension().lastPathComponent {
-                if name == "Windows App" || name == "New Bottle" || name.isEmpty {
-                    name = filename
-                }
-            }
-        }
-    }
-
-    private func chooseCustomFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a Mac folder to share with the virtual machine"
-        if panel.runModal() == .OK, let url = panel.url {
-            let path = url.path
-            if !customSharedFolders.contains(path) {
-                customSharedFolders.append(path)
-            }
         }
     }
 }
