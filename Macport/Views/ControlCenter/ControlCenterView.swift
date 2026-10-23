@@ -566,9 +566,7 @@ struct ControlCenterVMCard: View {
                 if !vmState.isActive {
                     state.start(config, in: store)
                 }
-                if config.guest != .windowsApp {
-                    openWindow(value: config.id)
-                }
+                openWindow(value: config.id)
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "macwindow.on.rectangle")

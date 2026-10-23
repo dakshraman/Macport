@@ -250,31 +250,21 @@ struct MacportApp: App {
         }
     }
 
-    // MARK: - External URL Scheme Handler (macport://launch?bottle=...&exec=...)
+    // MARK: - External URL Scheme Handler (macport://launch?vm=...)
 
     private func handleIncomingURL(_ url: URL) {
         guard url.scheme?.lowercased() == "macport" else { return }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
 
-        let bottleParam = components.queryItems?.first(where: { $0.name == "bottle" })?.value
-        let vmParam = components.queryItems?.first(where: { $0.name == "vm" })?.value
-        let execParam = components.queryItems?.first(where: { $0.name == "exec" })?.value
+        let vmParam = components.queryItems?.first(where: { $0.name == "vm" || $0.name == "bottle" })?.value
 
-        guard let targetIdString = bottleParam ?? vmParam, let targetUUID = UUID(uuidString: targetIdString) else { return }
+        guard let targetIdString = vmParam, let targetUUID = UUID(uuidString: targetIdString) else { return }
         guard let config = store.machines.first(where: { $0.id == targetUUID }) else { return }
 
         ui.selection = config.id
         ui.viewMode = .split
         NSApp.activate(ignoringOtherApps: true)
 
-        let bundleURL = store.bundleURL(for: config)
-        if let exec = execParam, !exec.isEmpty {
-            Task {
-                let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
-                try? await engine.launchExecutable(exec, in: bundleURL, metal: true)
-            }
-        } else {
-            state.start(config, in: store)
-        }
+        state.start(config, in: store)
     }
 }

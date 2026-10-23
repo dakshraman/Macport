@@ -1,8 +1,8 @@
 import SwiftUI
 import MacportKit
 
-/// The main window: library on the left, the selected machine's dashboard on
-/// the right, and every sheet that acts on a machine.
+/// The main window: library on the left, the selected machine's console on
+/// the right, and Parallels-class Control Center gallery when in gallery mode or no selection.
 @MainActor
 struct ContentView: View {
     @EnvironmentObject private var store: VMStore
@@ -12,20 +12,22 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             VMLibraryView(selection: $ui.selection)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 290)
         } detail: {
             detail
         }
-        .background(Color.crossoverCanvas)
+        .background(Color.macportWindow)
         .sheet(isPresented: $state.isPresentingCreateSheet) {
             VMCreateView(
                 onCreate: { config in
                     state.create(config, in: store)
                     ui.selection = config.id
+                    ui.viewMode = .split
                 },
                 onCreateAndStart: { config in
                     state.create(config, in: store)
                     ui.selection = config.id
+                    ui.viewMode = .split
                     Task {
                         try? await Task.sleep(nanoseconds: 600_000_000)
                         state.start(config, in: store)
@@ -36,6 +38,7 @@ struct ContentView: View {
         .sheet(isPresented: $ui.isPresentingImport) {
             ImportWizardSheet(store: store, state: state) { config in
                 ui.selection = config.id
+                ui.viewMode = .split
             }
         }
         .sheet(isPresented: $ui.isPresentingSettings) {
@@ -59,17 +62,13 @@ struct ContentView: View {
             }
         }
         .sheet(item: $ui.renameTarget) { config in
-            RenameBottleSheet(config: config)
-        }
-        .sheet(item: $ui.bottleUninstallTarget) { config in
-            UninstallBottleAppsSheet(config: config)
+            RenameMachineSheet(config: config)
         }
         .overlay(alignment: .bottom) {
             problemOverlay
         }
         .tint(.macportAccent)
         .onAppear {
-            ui.viewMode = .gallery
             if let icon = NSImage(named: "AppIcon") ?? NSImage(named: "AppLogo") {
                 NSApp.applicationIconImage = icon
             }
@@ -92,7 +91,7 @@ struct ContentView: View {
         if let config = selectedConfig {
             VMDetailView(config: config)
         } else {
-            CrossOverHomeView()
+            ControlCenterView()
         }
     }
 
@@ -165,7 +164,7 @@ struct EmptyStateView: View {
             }
             .padding(.top, 8)
 
-            Text("Macport runs ARM64 Linux and Windows 11 on Arm at native speed via the macOS hypervisor.")
+            Text("Macport runs ARM64 Linux, Windows 11 on Arm, and macOS at native speed via the macOS hypervisor.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

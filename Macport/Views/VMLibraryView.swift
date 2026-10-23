@@ -268,7 +268,7 @@ struct VMLibraryView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(config.name)
                         .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? .primary : .primary.opacity(0.9))
+                        .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.tail)
 
@@ -432,7 +432,7 @@ struct VMLibraryView: View {
             HStack {
                 Text("\(state.registry.capacity.processorCount) Apple Silicon Cores")
                 Text("•")
-                Text(MacportFormat.bytes(state.registry.capacity.physicalMemory))
+                Text(MacportFormat.fileSize(state.registry.capacity.physicalMemory))
             }
             .font(.system(size: 9, design: .monospaced))
             .foregroundStyle(.tertiary)

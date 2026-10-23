@@ -544,7 +544,7 @@ struct VMCreateView: View {
                         in: 2...Double(maxHostMemoryGB),
                         step: 1
                     )
-                    Text("Host has \(MacportFormat.bytes(host.physicalMemory)) physical memory.")
+                    Text("Host has \(MacportFormat.fileSize(host.physicalMemory)) physical memory.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
