@@ -58,6 +58,12 @@ struct ContentView: View {
                 if ui.selection == config.id { ui.selection = nil }
             }
         }
+        .sheet(item: $ui.renameTarget) { config in
+            RenameBottleSheet(config: config)
+        }
+        .sheet(item: $ui.bottleUninstallTarget) { config in
+            UninstallBottleAppsSheet(config: config)
+        }
         .overlay(alignment: .bottom) {
             problemOverlay
         }

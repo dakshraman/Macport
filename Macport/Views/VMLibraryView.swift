@@ -220,6 +220,12 @@ struct VMLibraryView: View {
                         Button("Wine Configuration") {
                             launchWinecfg(config)
                         }
+                        Button("Rename Bottle…") {
+                            ui.renameTarget = config
+                        }
+                        Button("Uninstall Applications…") {
+                            ui.bottleUninstallTarget = config
+                        }
                         Divider()
                         Button("Duplicate Bottle…") {
                             ui.cloneTarget = config
@@ -266,6 +272,14 @@ struct VMLibraryView: View {
 
             Button("Wine Configuration (winecfg)") {
                 launchWinecfg(config)
+            }
+
+            Button("Rename Bottle…") {
+                ui.renameTarget = config
+            }
+
+            Button("Uninstall Applications…") {
+                ui.bottleUninstallTarget = config
             }
 
             Divider()
@@ -391,6 +405,10 @@ struct VMLibraryView: View {
             }
 
             Divider()
+
+            Button("Rename…") {
+                ui.renameTarget = config
+            }
 
             Button("Clone Machine…") {
                 ui.cloneTarget = config

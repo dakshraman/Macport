@@ -15,6 +15,8 @@ struct CrossOverHomeView: View {
     @State private var statusMessage: String?
     @State private var searchText = ""
     @State private var selectedBottleFilter: String? = nil
+    @State private var targetToUninstall: HomeAppItem?
+    @State private var isConfirmingUninstall = false
 
     struct HomeAppItem: Identifiable, Hashable {
         let id: String
@@ -97,6 +99,22 @@ struct CrossOverHomeView: View {
             }
         }
         .background(Color.crossoverCanvas)
+        .confirmationDialog(
+            "Uninstall \(targetToUninstall?.name ?? "Application")?",
+            isPresented: $isConfirmingUninstall,
+            titleVisibility: .visible
+        ) {
+            Button("Uninstall", role: .destructive) {
+                if let item = targetToUninstall {
+                    performUninstallHomeItem(item)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                targetToUninstall = nil
+            }
+        } message: {
+            Text("This will launch the application's uninstaller in '\(targetToUninstall?.bottleName ?? "bottle")' and clean up its Mac launcher wrappers in Applications and Desktop.")
+        }
         .onAppear {
             refreshAllApps()
         }
@@ -317,6 +335,15 @@ struct CrossOverHomeView: View {
             } label: {
                 Label("Open Bottle C: Drive", systemImage: "internaldrive")
             }
+
+            Divider()
+
+            Button(role: .destructive) {
+                targetToUninstall = item
+                isConfirmingUninstall = true
+            } label: {
+                Label("Uninstall Application…", systemImage: "trash")
+            }
         }
     }
 
@@ -450,6 +477,35 @@ struct CrossOverHomeView: View {
             NSWorkspace.shared.activateFileViewerSelecting([appURL])
         } catch {
             statusMessage = "Failed to export application: \(error.localizedDescription)"
+        }
+    }
+
+    private func performUninstallHomeItem(_ item: HomeAppItem) {
+        guard let config = store.machines.first(where: { $0.id == item.bottleId }) else { return }
+        let bundleURL = store.bundleURL(for: config)
+        let shortcut = WineProgramShortcut(
+            id: item.id,
+            name: item.name,
+            executable: item.executable,
+            iconSystemName: item.iconSystemName,
+            iconURL: item.iconURL
+        )
+
+        Task {
+            do {
+                let cmd = WineBottleManager.findUninstallCommand(for: shortcut, in: bundleURL)
+                let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
+                try await engine.launchExecutable(cmd.executable, arguments: cmd.arguments, in: bundleURL, metal: true)
+
+                WineBottleManager.removeLauncherApps(appName: item.name)
+
+                statusMessage = "Launched uninstaller for '\(item.name)'. Follow on-screen instructions to complete uninstallation."
+
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                refreshAllApps()
+            } catch {
+                statusMessage = "Failed to launch uninstaller: \(error.localizedDescription)"
+            }
         }
     }
 }

@@ -700,6 +700,8 @@ struct WineBottleDetailView: View {
     @State private var hoveredShortcutId: String?
     @State private var appSearchQuery = ""
     @State private var hoveredPanelId: String?
+    @State private var uninstallShortcutTarget: WineProgramShortcut?
+    @State private var isConfirmingShortcutUninstall = false
 
     private var vmState: VMState { state.state(for: config.id) }
     private var bundleURL: URL { store.bundleURL(for: config) }
@@ -745,6 +747,22 @@ struct WineBottleDetailView: View {
         .sheet(isPresented: $isPresentingRunCommand) {
             runCommandSheet
         }
+        .confirmationDialog(
+            "Uninstall \(uninstallShortcutTarget?.name ?? "Application")?",
+            isPresented: $isConfirmingShortcutUninstall,
+            titleVisibility: .visible
+        ) {
+            Button("Uninstall", role: .destructive) {
+                if let sc = uninstallShortcutTarget {
+                    performUninstallShortcut(sc)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                uninstallShortcutTarget = nil
+            }
+        } message: {
+            Text("This will launch the application's uninstaller in '\(config.name)' and clean up its Mac launcher wrappers in Applications and Desktop.")
+        }
         .onAppear {
             refreshBottleData()
         }
@@ -756,9 +774,23 @@ struct WineBottleDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(config.name)
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(.white)
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(config.name)
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundStyle(.white)
+
+                        Button {
+                            ui.renameTarget = config
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.crossoverTextSecondary)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Rename Bottle")
+                    }
 
                     Text("Bottle Type: \(bottleTypeDisplayString)")
                         .font(.system(size: 12))
@@ -997,6 +1029,15 @@ struct WineBottleDetailView: View {
             } label: {
                 Label("Show in Finder", systemImage: "folder")
             }
+
+            Divider()
+
+            Button(role: .destructive) {
+                uninstallShortcutTarget = shortcut
+                isConfirmingShortcutUninstall = true
+            } label: {
+                Label("Uninstall Application…", systemImage: "trash")
+            }
         }
     }
 
@@ -1098,6 +1139,14 @@ struct WineBottleDetailView: View {
                 .tracking(0.5)
 
             VStack(spacing: 6) {
+                inspectorStandardButton(title: "Rename Bottle…", icon: "pencil") {
+                    ui.renameTarget = config
+                }
+
+                inspectorStandardButton(title: "Uninstall an Application…", icon: "xmark.bin.fill") {
+                    ui.bottleUninstallTarget = config
+                }
+
                 inspectorStandardButton(title: "Add to Applications", icon: "app.badge.checkmark") {
                     exportPrimaryApp(to: .applications)
                 }
@@ -1317,6 +1366,10 @@ struct WineBottleDetailView: View {
                 .tracking(0.5)
 
             VStack(spacing: 0) {
+                controlPanelRow(title: "Add/Remove Programs", icon: "xmark.bin") {
+                    ui.bottleUninstallTarget = config
+                }
+                Divider().background(Color.white.opacity(0.06))
                 controlPanelRow(title: "Wine Configuration", icon: "gearshape.fill") {
                     executeCommandString("winecfg")
                 }
@@ -1588,6 +1641,26 @@ struct WineBottleDetailView: View {
             statusMessage = "All bottle processes terminated."
         } catch {
             statusMessage = "Failed to terminate bottle: \(error.localizedDescription)"
+        }
+    }
+
+    private func performUninstallShortcut(_ shortcut: WineProgramShortcut) {
+        Task {
+            do {
+                let cmd = WineBottleManager.findUninstallCommand(for: shortcut, in: bundleURL)
+                let engine = (state.instance(for: config.id)?.engine as? WineEngine) ?? WineEngine()
+                try await engine.launchExecutable(cmd.executable, arguments: cmd.arguments, in: bundleURL, metal: true)
+
+                // Clean up exported Mac launcher apps
+                WineBottleManager.removeLauncherApps(appName: shortcut.name)
+
+                statusMessage = "Launched uninstaller for '\(shortcut.name)'. Follow on-screen instructions to complete uninstallation."
+
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                refreshBottleData()
+            } catch {
+                statusMessage = "Failed to launch uninstaller: \(error.localizedDescription)"
+            }
         }
     }
 
