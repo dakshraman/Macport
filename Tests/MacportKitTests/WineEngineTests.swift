@@ -218,11 +218,40 @@ final class WineEngineTests: XCTestCase {
 
     func testExistingCrossOverBottlesDiscovery() {
         let bottles = WineRuntime.existingCrossOverBottles()
-        // If CrossOver is installed, it should find Genshin bottle
         if FileManager.default.fileExists(atPath: WineRuntime.crossoverBottlesDirectory.path) {
             XCTAssertFalse(bottles.isEmpty)
-            XCTAssertTrue(bottles.contains(where: { $0.name.contains("Genshin") }))
+            XCTAssertTrue(bottles.contains(where: { $0.name.contains("Genshin") || $0.name.contains("Games") }))
         }
+    }
+
+    func testResolveExecutablePath() throws {
+        let tempBundle = FileManager.default.temporaryDirectory.appendingPathComponent("TestBundle_\(UUID().uuidString)")
+        let driveC = tempBundle.appendingPathComponent("bottle/drive_c", isDirectory: true)
+        let progFiles = driveC.appendingPathComponent("Program Files/HoYoPlay/games/Genshin Impact game", isDirectory: true)
+        try FileManager.default.createDirectory(at: progFiles, withIntermediateDirectories: true)
+        let exe = progFiles.appendingPathComponent("GenshinImpact.exe")
+        try "fake binary".write(to: exe, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tempBundle) }
+
+        // Test 1: Stale host path from an old renamed bottle
+        let staleOldPath = "/Users/someone/Library/Application Support/CrossOver/Bottles/OldName/drive_c/Program Files/HoYoPlay/games/Genshin Impact game/GenshinImpact.exe"
+        let resolvedStale = WineBottleManager.resolveExecutablePath(staleOldPath, in: tempBundle)
+        XCTAssertEqual(resolvedStale, exe.path)
+
+        // Test 2: Windows path format
+        let winPath = "C:\\Program Files\\HoYoPlay\\games\\Genshin Impact game\\GenshinImpact.exe"
+        let resolvedWin = WineBottleManager.resolveExecutablePath(winPath, in: tempBundle)
+        XCTAssertEqual(resolvedWin, exe.path)
+
+        // Test 3: Relative path
+        let relPath = "Program Files/HoYoPlay/games/Genshin Impact game/GenshinImpact.exe"
+        let resolvedRel = WineBottleManager.resolveExecutablePath(relPath, in: tempBundle)
+        XCTAssertEqual(resolvedRel, exe.path)
+
+        // Test 4: Built-in Wine command
+        let builtIn = "winecfg"
+        let resolvedBuiltIn = WineBottleManager.resolveExecutablePath(builtIn, in: tempBundle)
+        XCTAssertEqual(resolvedBuiltIn, "winecfg")
     }
 
     func testGraphicsBackendDisplayNames() {

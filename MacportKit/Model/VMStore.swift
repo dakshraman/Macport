@@ -165,6 +165,12 @@ public final class VMStore: ObservableObject {
             if updated.wineSettings?.linkedCrossOverBottle == oldName {
                 updated.wineSettings?.linkedCrossOverBottle = trimmed
             }
+
+            if let primary = updated.wineSettings?.primaryExecutable {
+                updated.wineSettings?.primaryExecutable = WineBottleManager.resolveExecutablePath(primary, in: bURL)
+            }
+
+            MacportAppPublisher.synchronizeLaunchers(for: config.id, newBottleName: trimmed, bundleURL: bURL)
         }
 
         updated.name = trimmed

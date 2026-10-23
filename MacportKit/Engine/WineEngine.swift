@@ -143,16 +143,20 @@ public final class WineEngine: VMEngine {
             var workingDir: URL?
 
             if let primary = config.wineSettings?.primaryExecutable, !primary.isEmpty {
-                targetArgs = [primary]
-                if primary.hasPrefix("/") {
-                    workingDir = URL(fileURLWithPath: primary).deletingLastPathComponent()
+                let effectivePrimary = WineBottleManager.resolveExecutablePath(primary, in: bundle)
+                targetArgs = [effectivePrimary]
+                if effectivePrimary.hasPrefix("/") {
+                    workingDir = URL(fileURLWithPath: effectivePrimary).deletingLastPathComponent()
                 }
             } else {
                 let shortcuts = WineBottleManager.scanInstalledShortcuts(in: bundle)
-                // Prefer installed launcher/game over installer media
+                // Prefer installed game executable over launcher or generic utilities
                 if let mainShortcut = shortcuts.first(where: {
                     let low = $0.name.lowercased()
-                    return low.contains("launcher") || low.contains("game") || low.contains("genshin") || low.contains("steam")
+                    return low.contains("genshin") || low.contains("zenless") || low.contains("game") || low.contains("steam")
+                }) ?? shortcuts.first(where: {
+                    let low = $0.name.lowercased()
+                    return low.contains("launcher")
                 }) ?? shortcuts.first {
                     targetArgs = [mainShortcut.executable]
                     workingDir = URL(fileURLWithPath: mainShortcut.executable).deletingLastPathComponent()
@@ -283,7 +287,8 @@ public final class WineEngine: VMEngine {
             runtime: runtime
         )
 
-        let targetArgs = [executable] + arguments
+        let effectiveExecutable = WineBottleManager.resolveExecutablePath(executable, in: bundle)
+        let targetArgs = [effectiveExecutable] + arguments
 
         if let wineBin = runtime.wine, runtime.cxbottle != nil {
             process.executableURL = wineBin
@@ -297,17 +302,13 @@ public final class WineEngine: VMEngine {
         process.environment = env
 
         let driveC = WineBottleManager.driveCURL(for: bundle)
-        if executable.hasPrefix("/") {
-            let dir = URL(fileURLWithPath: executable).deletingLastPathComponent()
+        if effectiveExecutable.hasPrefix("/") {
+            let dir = URL(fileURLWithPath: effectiveExecutable).deletingLastPathComponent()
             if FileManager.default.fileExists(atPath: dir.path) {
                 process.currentDirectoryURL = dir
             }
         } else {
-            var clean = executable.replacingOccurrences(of: "\\", with: "/")
-            if clean.lowercased().hasPrefix("c:/") {
-                clean = String(clean.dropFirst(3))
-            }
-            let candidate = driveC.appendingPathComponent(clean)
+            let candidate = driveC.appendingPathComponent(effectiveExecutable)
             let parent = candidate.deletingLastPathComponent()
             if FileManager.default.fileExists(atPath: parent.path) {
                 process.currentDirectoryURL = parent
