@@ -730,37 +730,43 @@ public enum WineBottleManager: Sendable {
             str = String(str.dropFirst(7)).trimmingCharacters(in: .whitespaces)
         }
 
-        var executable = ""
-        var arguments: [String] = []
-
         if str.hasPrefix("\"") {
             let afterFirst = str.index(after: str.startIndex)
             if let secondQuote = str[afterFirst...].firstIndex(of: "\"") {
-                executable = String(str[afterFirst..<secondQuote])
+                let candidateExe = String(str[afterFirst..<secondQuote])
                 let rest = str[str.index(after: secondQuote)...].trimmingCharacters(in: .whitespaces)
-                if !rest.isEmpty {
-                    arguments = parseCommandLineArguments(rest)
+
+                // If candidateExe contains ".exe ", it was a full command wrapped inside quotes
+                if let exeRange = candidateExe.range(of: ".exe ", options: .caseInsensitive) {
+                    let exe = String(candidateExe[..<exeRange.lowerBound]) + ".exe"
+                    let innerArgs = String(candidateExe[exeRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    let fullRest = (innerArgs + " " + rest).trimmingCharacters(in: .whitespaces)
+                    let args = fullRest.isEmpty ? [] : parseCommandLineArguments(fullRest)
+                    return (exe, args)
                 }
+
+                let args = rest.isEmpty ? [] : parseCommandLineArguments(rest)
+                return (candidateExe, args)
             } else {
-                executable = str.replacingOccurrences(of: "\"", with: "")
-            }
-        } else {
-            if let exeRange = str.range(of: ".exe ", options: .caseInsensitive) {
-                executable = String(str[..<exeRange.lowerBound]) + ".exe"
-                let rest = String(str[exeRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-                if !rest.isEmpty {
-                    arguments = parseCommandLineArguments(rest)
-                }
-            } else {
-                let parts = str.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-                if let first = parts.first {
-                    executable = first
-                    arguments = Array(parts.dropFirst())
-                }
+                str = str.replacingOccurrences(of: "\"", with: "")
             }
         }
 
-        return (executable, arguments)
+        if let exeRange = str.range(of: ".exe ", options: .caseInsensitive) {
+            let exe = String(str[..<exeRange.lowerBound]) + ".exe"
+            let rest = String(str[exeRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            let args = rest.isEmpty ? [] : parseCommandLineArguments(rest)
+            return (exe, args)
+        } else {
+            let parts = str.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            if let first = parts.first {
+                let exe = first
+                let args = Array(parts.dropFirst())
+                return (exe, args)
+            }
+        }
+
+        return ("", [])
     }
 
     private static func parseCommandLineArguments(_ argsString: String) -> [String] {
